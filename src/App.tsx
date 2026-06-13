@@ -53,6 +53,7 @@ export default function App() {
   // Compare state
   const [compareMode, setCompareMode] = useState(false);
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
+  const [pendingExportAction, setPendingExportAction] = useState<{action: () => void, name: string} | null>(null);
 
   const toggleCompareSelect = (id: string) => {
     setSelectedCompareIds(prev => {
@@ -421,6 +422,15 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     showToast('جاري البدء بتحميل المستند المعتمد.');
+  };
+
+  const handleExportWithValidation = (actionName: string, actionFn: () => void) => {
+    const hasCriticalErrors = activeFile?.report?.topFixes.some((f) => f.priority === 'MUST_HAVE');
+    if (hasCriticalErrors) {
+      setPendingExportAction({ action: actionFn, name: actionName });
+    } else {
+      actionFn();
+    }
   };
 
   const exportToTasks = async (fixes: any[]) => {
@@ -1473,31 +1483,31 @@ ${activeFile.report?.topFixes.slice(0, 3).map((f, i) => `${i+1}. [البند ${f
                           </button>
                         )}
                         <button 
-                          onClick={() => copyToClipboard(
+                          onClick={() => handleExportWithValidation('نسخ الكود', () => copyToClipboard(
                             editorViewMode === 'original' ? activeFile.content : activeFile.report!.cleanedContent || '', 
                             editorViewMode === 'original' ? 'المستند الأصلي' : 'المستند المطهر'
-                          )}
+                          ))}
                           className="text-xs bg-[#161a29] hover:bg-[#1f263c] border border-gray-800 text-gray-300 font-bold py-2 px-3 rounded-lg transition flex items-center gap-1.5"
                         >
                           <Copy className="w-3.5 h-3.5" />
                           <span>نسخ الكود</span>
                         </button>
                         <button 
-                          onClick={() => saveToKeep(activeFile.name, editorViewMode === 'original' ? activeFile.content : activeFile.report!.cleanedContent || '')}
+                          onClick={() => handleExportWithValidation('حفظ في Keep', () => saveToKeep(activeFile.name, editorViewMode === 'original' ? activeFile.content : activeFile.report!.cleanedContent || ''))}
                           className="text-xs bg-[#161a29] hover:bg-[#1f263c] border border-gray-800 text-amber-300 font-bold py-2 px-3 rounded-lg transition flex items-center gap-1.5"
                         >
                           <StickyNote className="w-3.5 h-3.5" />
                           <span>حفظ في Keep</span>
                         </button>
                         <button 
-                          onClick={() => shareViaEmail(activeFile.name, activeFile.report!.complianceScore, activeFile.report!.cleanedContent || activeFile.content)}
+                          onClick={() => handleExportWithValidation('إرسال لبريدي (Gmail)', () => shareViaEmail(activeFile.name, activeFile.report!.complianceScore, activeFile.report!.cleanedContent || activeFile.content))}
                           className="text-xs bg-[#161a29] hover:bg-[#1f263c] border border-gray-800 text-rose-300 font-bold py-2 px-3 rounded-lg transition flex items-center gap-1.5"
                         >
                           <Mail className="w-3.5 h-3.5" />
                           <span>إرسال لبريدي (Gmail)</span>
                         </button>
                         <button 
-                          onClick={() => downloadCleanedFile(activeFile.name, activeFile.report!.cleanedContent || '')}
+                          onClick={() => handleExportWithValidation('تحميل الملف (.md)', () => downloadCleanedFile(activeFile.name, activeFile.report!.cleanedContent || ''))}
                           className="text-xs bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg transition flex items-center gap-1.5"
                         >
                           <FileDown className="w-3.5 h-3.5" />
@@ -1854,6 +1864,72 @@ ${activeFile.report?.topFixes.slice(0, 3).map((f, i) => `${i+1}. [البند ${f
         </div>
 
       </main>
+
+      {/* Critical Action Modal */}
+      {pendingExportAction && activeFile?.report && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#11141e] border border-rose-900 shadow-2xl shadow-rose-900/20 rounded-2xl w-full max-w-lg p-6 relative overflow-hidden">
+            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-rose-500 to-rose-700"></div>
+            
+            <div className="flex items-start justify-between mb-4 mt-2">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-rose-950/50 flex items-center justify-center border border-rose-900/50 shrink-0">
+                  <AlertCircle className="w-5 h-5 text-rose-500" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">تحذير أمني وموثوقية</h3>
+                  <p className="text-xs text-rose-400">محاولة {pendingExportAction.name} مع وجود أخطاء حرجة</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setPendingExportAction(null)}
+                className="text-gray-500 hover:text-white transition p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="bg-[#161a29] p-4 rounded-xl border border-rose-950/50">
+                <p className="text-xs text-gray-300 leading-relaxed">
+                  الملف يحتوي حاليًا على أخطاء حرجة (MUST_HAVE) تمنع الامتثال الآمن. من المستحسن إصلاح هذه المشكلات داخل محرر النسخة النظيفة قبل التصدير. تجاوز هذا التحذير يؤدي لانتشار العيوب المعرفية. 
+                </p>
+              </div>
+
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest leading-none mb-3">الأسباب المكتشفة:</h4>
+                {activeFile.report.topFixes.filter(f => f.priority === 'MUST_HAVE').map((fix, idx) => (
+                  <div key={idx} className="flex gap-2 text-xs">
+                    <span className="text-rose-500 mt-0.5 shrink-0">•</span>
+                    <div>
+                      <span className="font-bold text-white">{fix.name}</span>
+                      <p className="text-[10px] text-gray-500 mt-0.5 leading-normal">{fix.recommendation}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-8 flex gap-3">
+              <button 
+                onClick={() => setPendingExportAction(null)}
+                className="flex-1 bg-[#1a2033] hover:bg-[#222940] text-white text-xs font-bold py-3 px-4 rounded-xl transition border border-gray-700"
+              >
+                إلغاء والعودة للمراجعة
+              </button>
+              <button 
+                onClick={() => {
+                  pendingExportAction.action();
+                  setPendingExportAction(null);
+                }}
+                className="bg-rose-950/40 hover:bg-rose-900 border border-rose-900 text-rose-300 text-xs font-bold py-3 px-4 rounded-xl transition"
+              >
+                تخطي وتأكيد التسريب
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer copyright */}
       <footer className="mt-16 border-t border-gray-900 bg-[#0a0c12] py-8 text-center text-xs text-gray-650">
