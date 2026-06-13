@@ -8,11 +8,12 @@ import {
   FileText, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, 
   ChevronDown, ChevronUp, Copy, Download, RefreshCw, Layers, Shield, 
   Database, Activity, Users, FileCode, Check, Eye, Trash2, ArrowLeftRight,
-  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings
+  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { CHECKLIST_CHAPTERS, DEFAULT_CHECKLIST_ITEMS } from './checklistData';
 import { AuditItem, ChecklistChapter, AuditReport, FileToAudit, AuditHistoryEntry } from './types';
+import { initAuth, googleSignIn, logout, getAccessToken } from './lib/firebase';
 
 export default function App() {
   // Main State
@@ -37,8 +38,30 @@ export default function App() {
   // Toast notifications state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warn' | 'error' } | null>(null);
 
+  // Sidebar Search
+  const [sidebarSearch, setSidebarSearch] = useState('');
+  
+  // Workspace Auth State
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<any | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
   // Load history from localStorage on initialization
   useEffect(() => {
+    initAuth(
+      (user, token) => {
+        setAuthUser(user);
+        setAuthToken(token);
+        setNeedsAuth(false);
+      },
+      () => {
+        setAuthUser(null);
+        setAuthToken(null);
+        setNeedsAuth(true);
+      }
+    );
+
     const saved = localStorage.getItem('smart_file_auditor_history');
     if (saved) {
       try {
@@ -48,6 +71,33 @@ export default function App() {
       }
     }
   }, []);
+
+  const handleGoogleLogin = async () => {
+    setIsLoggingIn(true);
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setAuthToken(result.accessToken);
+        setAuthUser(result.user);
+        setNeedsAuth(false);
+        showToast('تم تسجيل الدخول بنجاح مع Google Workspace', 'success');
+        
+        // Ensure user is synced with backend Cloud SQL db (Call an API if we exposed one, but for now we rely on the app starting up properly)
+      }
+    } catch (err) {
+      console.error('Login failed:', err);
+      showToast('فشل تسجيل الدخول.', 'error');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleGoogleLogout = async () => {
+    await logout();
+    setAuthUser(null);
+    setAuthToken(null);
+    setNeedsAuth(true);
+  };
 
   // Save history to storage helper
   const saveHistory = (newHistory: AuditHistoryEntry[]) => {
@@ -62,6 +112,11 @@ export default function App() {
 
   // Helper to trigger active file
   const activeFile = files.find(f => f.id === selectedFileId);
+
+  // Sidebar search filtering
+  const filteredFiles = files.filter(file => 
+    file.name.toLowerCase().includes(sidebarSearch.toLowerCase())
+  );
 
   // Handle single or multiple file selection
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -447,6 +502,50 @@ export default function App() {
           
           {/* Right Sidebar - File Manager */}
           <div className="lg:col-span-1 space-y-6">
+          
+            {/* Workspace Auth Profile */}
+            <div className="bg-[#11141e] border border-gray-800/80 rounded-2xl p-5 shadow-sm">
+              <h3 className="text-sm font-bold text-white mb-3 flex items-center justify-between">
+                <span>صلة أمان Google Workspace</span>
+              </h3>
+              
+              {needsAuth || !authUser ? (
+                <button 
+                  onClick={handleGoogleLogin} 
+                  disabled={isLoggingIn}
+                  className="w-full py-2.5 px-4 rounded-xl border border-gray-800 bg-[#161a29] text-xs font-bold text-gray-300 hover:bg-[#1a2033] hover:text-white transition flex items-center justify-center gap-2"
+                >
+                  {isLoggingIn ? 'جاري الاتصال...' : 'Sign in with Google'}
+                </button>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-3">
+                    {authUser.photoURL ? (
+                      <img src={authUser.photoURL} alt="Profile" className="w-8 h-8 rounded-full border border-gray-700" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-indigo-900 border border-indigo-700 flex items-center justify-center text-xs">{authUser.email?.charAt(0).toUpperCase()}</div>
+                    )}
+                    <div className="flex-1 overflow-hidden">
+                      <p className="text-xs text-white truncate font-bold">{authUser.displayName || 'Google User'}</p>
+                      <p className="text-[10px] text-gray-400 truncate">{authUser.email}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400 mb-2">
+                    <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Drive</span>
+                    <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Docs</span>
+                    <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Sheets</span>
+                    <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Gmail</span>
+                  </div>
+                  <button 
+                    onClick={handleGoogleLogout} 
+                    className="w-full py-1.5 px-4 rounded-lg bg-gray-900 text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition"
+                  >
+                    تسجيل الخروج
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="bg-[#11141e] border border-gray-800/80 rounded-2xl p-5 shadow-sm">
               <h3 className="text-sm font-bold text-white mb-3 flex items-center justify-between">
                 <span>ملفات المعرفة الحالية</span>
@@ -527,15 +626,45 @@ export default function App() {
                 </div>
               )}
 
+              {/* Sidebar Search Input */}
+              {files.length > 0 && (
+                <div className="relative mb-4">
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-gray-500">
+                    <Search className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="text"
+                    value={sidebarSearch}
+                    onChange={(e) => setSidebarSearch(e.target.value)}
+                    placeholder="ابحث عن ملف بالاسم..."
+                    className="w-full bg-[#141824] border border-gray-800 rounded-xl pr-9 pl-8 py-2 text-xs text-white placeholder-gray-500 focus:border-teal-500 focus:ring-1 focus:ring-teal-500/20 outline-none transition"
+                  />
+                  {sidebarSearch && (
+                    <button
+                      onClick={() => setSidebarSearch('')}
+                      className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-gray-500 hover:text-gray-300 transition"
+                      title="مسح البحث"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* List of active files */}
               {files.length === 0 ? (
                 <div className="text-center py-8 text-gray-500 border border-gray-900 rounded-xl bg-[#0d0f17]">
                   <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
                   <p className="text-xs">لا يوجد ملفات محملة حالياً للتدقيق.</p>
                 </div>
+              ) : filteredFiles.length === 0 ? (
+                <div className="text-center py-8 text-gray-500 border border-gray-800 border-dashed rounded-xl bg-[#141824]/30">
+                  <Search className="w-6 h-6 mx-auto mb-2 text-gray-600" />
+                  <p className="text-xs font-semibold">لا توجد نتائج تطابق "{sidebarSearch}"</p>
+                </div>
               ) : (
                 <div className="max-h-80 overflow-y-auto space-y-2.5 pr-1">
-                  {files.map(file => {
+                  {filteredFiles.map(file => {
                     const isSelected = selectedFileId === file.id;
                     return (
                       <div 
