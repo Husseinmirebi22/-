@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, FileText, CheckCircle2, ChevronRight, RefreshCw, Layers } from 'lucide-react';
+import { Download, FileText, CheckCircle2, ChevronRight, RefreshCw, Layers, Calendar, CheckSquare, Presentation } from 'lucide-react';
 import { getAccessToken } from '../lib/firebase';
 import { FileToAudit } from '../types';
 
@@ -150,6 +150,50 @@ export default function WorkspaceImport({
     }
   };
 
+  const importFromSlides = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const res = await fetch("https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.presentation'&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name)", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch slides list');
+      const data = await res.json();
+
+      const newFiles: FileToAudit[] = [];
+      for (const slide of data.files || []) {
+        // Export to plaintext
+        const exportRes = await fetch(`https://www.googleapis.com/drive/v3/files/${slide.id}/export?mimeType=text/plain`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (exportRes.ok) {
+          const content = await exportRes.text();
+          newFiles.push({
+            id: slide.id,
+            name: `Slides: ${slide.name}.txt`,
+            content,
+            size: content.length,
+            type: 'txt'
+          });
+        }
+      }
+      
+      if (newFiles.length > 0) {
+        onFilesImported(newFiles);
+      } else {
+        setError('لا توجد عروض تقديمية قائمة.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError('حدث خطأ أثناء استيراد العروض التديمية. قد لا تدعم هذه الخاصية تصدير النصوص البسيطة.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const importFromGmail = async () => {
     setLoading(true);
     setError(null);
@@ -256,38 +300,133 @@ export default function WorkspaceImport({
     }
   };
 
+  const importFromCalendar = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const timeMin = new Date().toISOString();
+      const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?orderBy=startTime&singleEvents=true&maxResults=10&timeMin=${timeMin}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (!res.ok) throw new Error('Failed to fetch calendar');
+      const data = await res.json();
+      
+      let content = '';
+      for (const event of data.items || []) {
+         const start = event.start?.dateTime || event.start?.date;
+         content += `[${start}] ${event.summary}\n${event.description || ''}\n\n`;
+      }
+
+      if (content.trim()) {
+        onFilesImported([{
+          id: 'calendar',
+          name: 'Calendar_Events.txt',
+          content,
+          size: content.length,
+          type: 'txt'
+        }]);
+      } else {
+        setError('لا توجد أحداث مجدولة قريباً في التقويم.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError('حدث خطأ أثناء استيراد التقويم.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const importFromTasks = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const listsRes = await fetch("https://tasks.googleapis.com/tasks/v1/users/@me/lists", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (!listsRes.ok) throw new Error('Failed to fetch task lists');
+      const listsData = await listsRes.json();
+      
+      const newFiles: FileToAudit[] = [];
+      for (const list of (listsData.items || []).slice(0, 2)) {
+         const tasksRes = await fetch(`https://tasks.googleapis.com/tasks/v1/lists/${list.id}/tasks`, {
+           headers: { Authorization: `Bearer ${token}` }
+         });
+         if (tasksRes.ok) {
+           const tasksData = await tasksRes.json();
+           const tasksText = (tasksData.items || []).map((t: any) => `- ${t.title}${t.notes ? `\n  ${t.notes}` : ''}`).join('\n');
+           if (tasksText) {
+             newFiles.push({
+               id: list.id,
+               name: `Tasks: ${list.title}.txt`,
+               content: tasksText,
+               size: tasksText.length,
+               type: 'txt'
+             });
+           }
+         }
+      }
+
+      if (newFiles.length > 0) {
+        onFilesImported(newFiles);
+      } else {
+        setError('لا توجد مهام حديثة في Google Tasks.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError('حدث خطأ أثناء استيراد المهام.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="bg-[#141824] border border-gray-800 rounded-xl p-4 mt-4 space-y-3">
       <h4 className="text-xs font-bold text-gray-300 mb-2">استيراد مباشر من Workspace</h4>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
         <button
           onClick={importFromDrive}
           disabled={loading}
-          className="py-2 px-3 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-teal-400"
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-teal-400"
         >
           <Layers className="w-4 h-4" />
-          <span className="text-[10px] font-bold">Google Drive</span>
+          <span className="text-[10px] font-bold">Drive</span>
         </button>
         <button
           onClick={importFromDocs}
           disabled={loading}
-          className="py-2 px-3 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-blue-400"
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-blue-400"
         >
           <FileText className="w-4 h-4" />
-          <span className="text-[10px] font-bold">Google Docs</span>
+          <span className="text-[10px] font-bold">Docs</span>
         </button>
         <button
           onClick={importFromSheets}
           disabled={loading}
-          className="py-2 px-3 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-emerald-400"
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-emerald-400"
         >
           <Layers className="w-4 h-4" />
-          <span className="text-[10px] font-bold">Google Sheets</span>
+          <span className="text-[10px] font-bold">Sheets</span>
+        </button>
+        <button
+          onClick={importFromSlides}
+          disabled={loading}
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-amber-500"
+        >
+          <Presentation className="w-4 h-4" />
+          <span className="text-[10px] font-bold">Slides</span>
         </button>
         <button
           onClick={importFromGmail}
           disabled={loading}
-          className="py-2 px-3 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-rose-400"
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-rose-400"
         >
           <Layers className="w-4 h-4" />
           <span className="text-[10px] font-bold">Gmail</span>
@@ -295,16 +434,32 @@ export default function WorkspaceImport({
         <button
           onClick={importFromChat}
           disabled={loading}
-          className="py-2 px-3 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-green-500 col-span-2"
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-green-500"
         >
           <Layers className="w-4 h-4" />
-          <span className="text-[10px] font-bold">Google Chat</span>
+          <span className="text-[10px] font-bold">Chat</span>
+        </button>
+        <button
+          onClick={importFromCalendar}
+          disabled={loading}
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-indigo-400"
+        >
+          <Calendar className="w-4 h-4" />
+          <span className="text-[10px] font-bold">Calendar</span>
+        </button>
+        <button
+          onClick={importFromTasks}
+          disabled={loading}
+          className="py-2 px-2 rounded-lg bg-[#1c2234] border border-gray-700 hover:bg-[#252d43] hover:border-gray-600 transition flex flex-col items-center justify-center gap-1 text-yellow-400"
+        >
+          <CheckSquare className="w-4 h-4" />
+          <span className="text-[10px] font-bold">Tasks</span>
         </button>
       </div>
 
       {loading && (
         <div className="flex items-center justify-center gap-2 text-[10px] text-gray-500 mt-2">
-          <RefreshCw className="w-3 h-3 animate-spin" /> جاري التنزيل...
+          <RefreshCw className="w-3 h-3 animate-spin" /> جاري الجلب...
         </div>
       )}
 
