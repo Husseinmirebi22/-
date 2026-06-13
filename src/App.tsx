@@ -14,6 +14,7 @@ import JSZip from 'jszip';
 import { CHECKLIST_CHAPTERS, DEFAULT_CHECKLIST_ITEMS } from './checklistData';
 import { AuditItem, ChecklistChapter, AuditReport, FileToAudit, AuditHistoryEntry } from './types';
 import { initAuth, googleSignIn, logout, getAccessToken } from './lib/firebase';
+import WorkspaceImport from './components/WorkspaceImport';
 
 export default function App() {
   // Main State
@@ -84,9 +85,11 @@ export default function App() {
         
         // Ensure user is synced with backend Cloud SQL db (Call an API if we exposed one, but for now we rely on the app starting up properly)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Login failed:', err);
-      showToast('فشل تسجيل الدخول.', 'error');
+      if (err?.code !== 'auth/popup-closed-by-user') {
+        showToast('فشل تسجيل الدخول.', 'error');
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -232,7 +235,9 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       setFiles(prev => prev.map(f => f.id === id ? { ...f, loading: false, error: 'فشل الفحص الدلالي الذكي. يرجى مراجعة خيارات مفتاح API.' } : f));
-      showToast('حدث خطأ في معالجة التدقيق السحابي.', 'error');
+      if (err?.message !== 'Failed to fetch') {
+         showToast('حدث خطأ في معالجة التدقيق السحابي.', 'error');
+      }
     }
   };
 
@@ -583,6 +588,16 @@ export default function App() {
                 <FileCode className="w-4 h-4" />
                 <span>إدراج نص يدوي</span>
               </button>
+
+              {/* Workspace Import (Only shows if authenticated) */}
+              {!needsAuth && authUser && (
+                <WorkspaceImport onFilesImported={(newFiles) => {
+                  setFiles(prev => [...prev, ...newFiles]);
+                  setSelectedFileId(newFiles[0].id);
+                  showToast(`تم استيراد ${newFiles.length} ملف من Workspace`);
+                  triggerAuditForFile(newFiles[0].id, newFiles[0].content, newFiles[0].name, newFiles[0].size);
+                }} />
+              )}
 
               {/* Paste Form Dialog inside layout */}
               {isPasting && (

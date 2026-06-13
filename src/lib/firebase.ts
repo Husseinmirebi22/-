@@ -6,7 +6,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 // Also setting up Firestore database to use it later
-export const firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const firestoreDb = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 
 const provider = new GoogleAuthProvider();
 // Request Google Workspace Scopes
