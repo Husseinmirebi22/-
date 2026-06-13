@@ -16,9 +16,10 @@ provider.addScope('https://www.googleapis.com/auth/gmail.modify');
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
 provider.addScope('https://www.googleapis.com/auth/chat.messages');
 provider.addScope('https://www.googleapis.com/auth/chat.spaces');
-provider.addScope('https://www.googleapis.com/auth/tasks.readonly');
+provider.addScope('https://www.googleapis.com/auth/tasks');
 provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
 provider.addScope('https://www.googleapis.com/auth/presentations.readonly');
+provider.addScope('https://www.googleapis.com/auth/keep');
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;

@@ -71,4 +71,5 @@ export interface AuditHistoryEntry {
   passedCount: number;
   failedCount: number;
   partialCount: number;
+  fullReport?: AuditReport;
 }

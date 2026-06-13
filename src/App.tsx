@@ -8,17 +8,19 @@ import {
   FileText, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, 
   ChevronDown, ChevronUp, Copy, Download, RefreshCw, Layers, Shield, 
   Database, Activity, Users, FileCode, Check, Eye, Trash2, ArrowLeftRight,
-  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X
+  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { CHECKLIST_CHAPTERS, DEFAULT_CHECKLIST_ITEMS } from './checklistData';
 import { AuditItem, ChecklistChapter, AuditReport, FileToAudit, AuditHistoryEntry } from './types';
 import { initAuth, googleSignIn, logout, getAccessToken } from './lib/firebase';
 import WorkspaceImport from './components/WorkspaceImport';
+import CompareView from './components/CompareView';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function App() {
   // Main State
-  const [activeTab, setActiveTab] = useState<'overview' | 'chapters' | 'editor' | 'graph' | 'history'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'chapters' | 'editor' | 'graph' | 'history' | 'steps'>('overview');
   const [mode, setMode] = useState<'teacher' | 'expert'>('teacher');
   const [files, setFiles] = useState<FileToAudit[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
@@ -47,6 +49,22 @@ export default function App() {
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<any | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Compare state
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
+
+  const toggleCompareSelect = (id: string) => {
+    setSelectedCompareIds(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(i => i !== id);
+      }
+      if (prev.length < 2) {
+        return [...prev, id];
+      }
+      return prev;
+    });
+  };
 
   // Load history from localStorage on initialization
   useEffect(() => {
@@ -226,7 +244,8 @@ export default function App() {
         complianceScore: report.complianceScore,
         passedCount: report.summary.passed,
         failedCount: report.summary.failed,
-        partialCount: report.summary.partial
+        partialCount: report.summary.partial,
+        fullReport: report,
       };
       
       saveHistory([newHistoryEntry, ...history]);
@@ -402,6 +421,120 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     showToast('جاري البدء بتحميل المستند المعتمد.');
+  };
+
+  const exportToTasks = async (fixes: any[]) => {
+    if (needsAuth || !authUser) {
+      showToast('يجب تسجيل الدخول باستخدام Google Workspace لإنشاء المهام.', 'warn');
+      return;
+    }
+    try {
+      showToast('جاري تصدير المهام...', 'warn');
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      for (const fix of fixes) {
+        await fetch("https://tasks.googleapis.com/tasks/v1/lists/@default/tasks", {
+          method: "POST",
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: `إصلاح: ${fix.name}`,
+            notes: `${fix.recommendation}\n\n[تم الاستخراج آليا من مدقق ملفات RAG]`
+          })
+        });
+      }
+      showToast('تم تصدير المهام بنجاح إلى Google Tasks!', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('حدث خطأ أثناء الاتصال بخدمة Tasks.', 'error');
+    }
+  };
+
+  const saveToKeep = async (title: string, content: string) => {
+    if (needsAuth || !authUser) {
+      showToast('يجب تسجيل الدخول باستخدام Google Workspace لإنشاء الملاحظات.', 'warn');
+      return;
+    }
+    try {
+      showToast('جاري الحفظ في Keep...', 'warn');
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const res = await fetch("https://keep.googleapis.com/v1/notes", {
+        method: "POST",
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: `ملف مدقق: ${title}`,
+          body: {
+            text: {
+              text: content
+            }
+          }
+        })
+      });
+      if (!res.ok) throw new Error('Failed to save to Keep');
+      showToast('تم حفظ الملف كمسودة في Google Keep!', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('حدث خطأ أثناء الحفظ في Keep. تأكد من تفعيل الأذونات.', 'error');
+    }
+  };
+
+  const shareViaEmail = async (fileName: string, score: number, fileContent: string) => {
+    if (needsAuth || !authUser) {
+      showToast('يجب تسجيل الدخول باستخدام Google Workspace لمشاركة التقارير.', 'warn');
+      return;
+    }
+    
+    try {
+      showToast('جاري إرسال البريد...', 'warn');
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const subject = `تقرير تدقيق: ${fileName} [درجة: ${score}%]`;
+      
+      const emailLines = [
+        `To: ${authUser.email}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'MIME-Version: 1.0',
+        `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+        '',
+        `مرحباً، مرفق لكم تقرير امتثال لملف ${fileName}.`,
+        `الدرجة الحالية: ${score}%`,
+        '',
+        'المحتوى المدقق:',
+        '------------------',
+        fileContent
+      ];
+      
+      const rawEmail = btoa(unescape(encodeURIComponent(emailLines.join('\r\n')))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+      const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+        method: "POST",
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          raw: rawEmail
+        })
+      });
+      
+      if (!res.ok) {
+        throw new Error('Failed to send email');
+      }
+      
+      showToast('تم إرسال التقرير المؤرشف بنجاح عبر البريد الإلكتروني!', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('حدث خطأ أثناء إرسال البريد عبر Gmail. تأكد من الأذونات.', 'error');
+    }
   };
 
   // Get rank badge based on compliance score
@@ -934,15 +1067,47 @@ security_level: داخلي
                       <History className="w-4 h-4" />
                       <span>تسلسل التحديثات والـ KPI</span>
                     </button>
+                    <button 
+                      onClick={() => setActiveTab('steps')}
+                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
+                        activeTab === 'steps' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      <ListChecks className="w-4 h-4" />
+                      <span>خطوات المراجعة</span>
+                    </button>
                   </div>
 
-                  <button 
-                    onClick={() => triggerAuditForFile(activeFile.id, activeFile.content, activeFile.name, activeFile.size)}
-                    className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition py-1 px-3 border border-indigo-900 rounded-lg bg-indigo-950/20"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>إعادة التدقيق</span>
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => shareViaEmail(activeFile.name, activeFile.report!.complianceScore, activeFile.report!.cleanedContent || activeFile.content)}
+                      className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 transition py-1 px-3 border border-rose-900 rounded-lg bg-rose-950/20"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>إرسال التقرير</span>
+                    </button>
+                    <button 
+                      onClick={() => saveToKeep(activeFile.name, activeFile.report!.cleanedContent || activeFile.content)}
+                      className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition py-1 px-3 border border-amber-900 rounded-lg bg-amber-950/20"
+                    >
+                      <StickyNote className="w-3.5 h-3.5" />
+                      <span>Keep</span>
+                    </button>
+                    <button 
+                      onClick={() => copyToClipboard(activeFile.report!.cleanedContent || activeFile.content, 'الملف المدقق')}
+                      className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-300 transition py-1 px-3 border border-gray-800 rounded-lg bg-gray-900/50"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>نسخ النص</span>
+                    </button>
+                    <button 
+                      onClick={() => triggerAuditForFile(activeFile.id, activeFile.content, activeFile.name, activeFile.size)}
+                      className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition py-1 px-3 border border-indigo-900 rounded-lg bg-indigo-950/20"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>إعادة التدقيق</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* TAB 1: OVERVIEW ROOM */}
@@ -955,7 +1120,18 @@ security_level: داخلي
                           <AlertCircle className="w-4 h-4 text-rose-400 animate-pulse" />
                           <span>أهم الإصلاحات الضرورية لتعزيز الجاهزية</span>
                         </h3>
-                        <span className="text-[10px] text-gray-500 font-bold">بناءً على أولويات الدستور المعرفي</span>
+                        <div className="flex items-center gap-3">
+                          {activeFile.report.topFixes.length > 0 && (
+                            <button
+                              onClick={() => exportToTasks(activeFile.report!.topFixes)}
+                              className="text-[10px] bg-[#1c2234] hover:bg-[#252d43] border border-indigo-900 text-indigo-400 font-bold py-1 px-3 rounded-md transition flex items-center gap-1.5"
+                            >
+                              <CheckSquare className="w-3.5 h-3.5" />
+                              <span>إرسال كمهام Tasks</span>
+                            </button>
+                          )}
+                          <span className="text-[10px] text-gray-500 font-bold">بناءً على أولويات الدستور المعرفي</span>
+                        </div>
                       </div>
 
                       {activeFile.report.topFixes.length === 0 ? (
@@ -1307,6 +1483,20 @@ ${activeFile.report?.topFixes.slice(0, 3).map((f, i) => `${i+1}. [البند ${f
                           <span>نسخ الكود</span>
                         </button>
                         <button 
+                          onClick={() => saveToKeep(activeFile.name, editorViewMode === 'original' ? activeFile.content : activeFile.report!.cleanedContent || '')}
+                          className="text-xs bg-[#161a29] hover:bg-[#1f263c] border border-gray-800 text-amber-300 font-bold py-2 px-3 rounded-lg transition flex items-center gap-1.5"
+                        >
+                          <StickyNote className="w-3.5 h-3.5" />
+                          <span>حفظ في Keep</span>
+                        </button>
+                        <button 
+                          onClick={() => shareViaEmail(activeFile.name, activeFile.report!.complianceScore, activeFile.report!.cleanedContent || activeFile.content)}
+                          className="text-xs bg-[#161a29] hover:bg-[#1f263c] border border-gray-800 text-rose-300 font-bold py-2 px-3 rounded-lg transition flex items-center gap-1.5"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          <span>إرسال لبريدي (Gmail)</span>
+                        </button>
+                        <button 
                           onClick={() => downloadCleanedFile(activeFile.name, activeFile.report!.cleanedContent || '')}
                           className="text-xs bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg transition flex items-center gap-1.5"
                         >
@@ -1514,46 +1704,144 @@ ${activeFile.report?.topFixes.slice(0, 3).map((f, i) => `${i+1}. [البند ${f
                           <span>سجل الجلسة للمستندات المفحوصة (تتبع الامتثال)</span>
                         </h3>
                         {history.length > 0 && (
-                          <button 
-                            onClick={() => {
-                              saveHistory([]);
-                              showToast('تم مسح سجل تتبع الامتثال.');
-                            }}
-                            className="text-xs text-rose-400 hover:text-rose-300 transition"
-                          >
-                            مسح السجل
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => {
+                                setCompareMode(!compareMode);
+                                setSelectedCompareIds([]);
+                              }}
+                              className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-2 transition ${compareMode ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-[#1c2234] border-gray-700 text-indigo-400 hover:bg-[#252d43]'}`}
+                            >
+                              <ArrowLeftRight className="w-3.5 h-3.5" />
+                              {compareMode ? 'إلغاء المقارنة' : 'مقارنة إصدارين'}
+                            </button>
+                            <button 
+                              onClick={() => {
+                                saveHistory([]);
+                                showToast('تم مسح سجل تتبع الامتثال.');
+                              }}
+                              className="text-xs text-rose-400 hover:text-rose-300 transition"
+                            >
+                              مسح السجل
+                            </button>
+                          </div>
                         )}
                       </div>
 
                       {history.length === 0 ? (
                         <p className="text-xs text-gray-500 py-6 text-center">لا توجد إصدارات أو فحصيات سابقة مسجلة.</p>
                       ) : (
-                        <div className="relative border-r-2 border-gray-800 mr-3 pr-4 space-y-4 py-2">
-                          {history.map((h, i) => (
-                            <div key={h.id} className="relative flex items-center justify-between">
-                              {/* Dot maker pointer */}
-                              <div className="absolute -right-[23px] w-2.5 h-2.5 rounded-full bg-indigo-500 border-2 border-gray-900"></div>
+                        <div className="space-y-6">
+                          <div className="h-64 w-full bg-[#0d0f17] border border-gray-800 rounded-xl p-4">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={[...history].reverse()} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" vertical={false} />
+                                <XAxis dataKey="fileName" stroke="#718096" fontSize={10} tickMargin={10} minTickGap={20} />
+                                <YAxis stroke="#718096" fontSize={10} domain={[0, 100]} tickFormatter={(val) => `${val}%`} />
+                                <Tooltip 
+                                  contentStyle={{ backgroundColor: '#11141e', borderColor: '#2d3748', borderRadius: '0.5rem', fontSize: '11px', color: '#e2e8f0', direction: 'rtl' }}
+                                  itemStyle={{ color: '#teal-400' }}
+                                />
+                                <Line type="monotone" dataKey="complianceScore" name="درجة الامتثال" stroke="#38b2ac" strokeWidth={3} dot={{ r: 4, fill: '#38b2ac', strokeWidth: 0 }} activeDot={{ r: 6, stroke: '#11141e', strokeWidth: 2 }} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
 
-                              <div className="space-y-0.5">
-                                <h4 className="text-xs font-bold text-white">{h.fileName}</h4>
-                                <span className="text-[10px] text-gray-500 block">تاريخ الفحص: {h.date}</span>
-                              </div>
+                          {compareMode && selectedCompareIds.length === 2 && (
+                            <CompareView 
+                              itemA={history.find(h => h.id === selectedCompareIds[1])!} 
+                              itemB={history.find(h => h.id === selectedCompareIds[0])!} 
+                            />
+                          )}
 
-                              <div className="flex items-center gap-3">
-                                <span className="text-[10px] text-gray-400 font-mono">
-                                  ✅ {h.passedCount} | ❌ {h.failedCount} | ⚠️ {h.partialCount}
-                                </span>
-                                <span className={`text-xs font-black font-mono px-2 py-1 rounded-lg ${
-                                  h.complianceScore >= 85 ? 'bg-green-950/40 text-green-400' : 'bg-rose-950/40 text-rose-450'
-                                }`}>
-                                  درجة: {h.complianceScore}%
-                                </span>
+                          <div className="relative border-r-2 border-gray-800 mr-3 pr-4 space-y-4 py-2">
+                            {history.map((h, i) => (
+                              <div key={h.id} className="relative flex items-center justify-between">
+                                {/* Dot maker pointer */}
+                                <div className="absolute -right-[23px] w-2.5 h-2.5 rounded-full bg-indigo-500 border-2 border-gray-900"></div>
+
+                                <div className="flex items-center gap-3">
+                                  {compareMode && h.fullReport && (
+                                    <input 
+                                      type="checkbox"
+                                      checked={selectedCompareIds.includes(h.id)}
+                                      onChange={() => toggleCompareSelect(h.id)}
+                                      disabled={selectedCompareIds.length >= 2 && !selectedCompareIds.includes(h.id)}
+                                      className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-indigo-500 cursor-pointer"
+                                    />
+                                  )}
+                                  <div className="space-y-0.5">
+                                    <h4 className="text-xs font-bold text-white">{h.fileName}{!h.fullReport && <span className="text-gray-600 mr-2 text-[9px] font-normal">(لا يتوفر تقرير كامل)</span>}</h4>
+                                    <span className="text-[10px] text-gray-500 block">تاريخ الفحص: {h.date}</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                  <span className="text-[10px] text-gray-400 font-mono">
+                                    ✅ {h.passedCount} | ❌ {h.failedCount} | ⚠️ {h.partialCount}
+                                  </span>
+                                  <span className={`text-xs font-black font-mono px-2 py-1 rounded-lg ${
+                                    h.complianceScore >= 85 ? 'bg-green-950/40 text-green-400' : 'bg-rose-950/40 text-rose-450'
+                                  }`}>
+                                    درجة: {h.complianceScore}%
+                                  </span>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 6: REVIEW STEPS */}
+                {activeTab === 'steps' && (
+                  <div className="space-y-6">
+                    <div className="bg-[#11141e] border border-gray-850 p-5 rounded-2xl">
+                      <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                        <ListChecks className="w-4 h-4 text-emerald-400" />
+                        <span>مسار الفحص والاعتماد (Review Steps)</span>
+                      </h3>
+                      <div className="space-y-4">
+                        <div className="p-4 rounded-xl bg-[#141824] border border-gray-800">
+                          <h4 className="text-xs font-bold text-emerald-400 mb-2">1. التحليل الهيكلي والتأكد من البيانات الوصفية</h4>
+                          <p className="text-[11px] text-gray-400 leading-relaxed mb-3">يتم فحص وجود وترتيب قسم YAML في الأعلى للحفاظ على السياق والمحددات الأساسية، بالإضافة إلى سلامة العناوين والفواصل.</p>
+                          <ul className="text-[10px] text-gray-500 list-disc list-inside space-y-1">
+                            <li>فحص وجود بيانات YAML مع العنوان، التاريخ، والنوع.</li>
+                            <li>التأكد من التدرج المنطقي للعناوين (H1 -&gt; H2 -&gt; H3).</li>
+                            <li>التأكد من غياب الأحرف غير المدعومة مثل الجداول التنسيقية المعقدة لملفات TXT.</li>
+                          </ul>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#141824] border border-gray-800">
+                          <h4 className="text-xs font-bold text-amber-400 mb-2">2. التدقيق المعرفي واكتشاف الهلوسات والكليشيهات</h4>
+                          <p className="text-[11px] text-gray-400 leading-relaxed mb-3">تقييم الأسلوب اللغوي وإزالة الكليشيهات والتعابير النمطية المستخدمة في منصات الذكاء الاصطناعي مع قياس كثافة المعلومات.</p>
+                          <ul className="text-[10px] text-gray-500 list-disc list-inside space-y-1">
+                            <li>فلترة التعابير النمطية (مثل: "مما لا شك فيه"، "في ختام هذا المطاف").</li>
+                            <li>التحقق من خلو النص من هلوسات أو معلومات غير مدعمة بأدلة قاطعة.</li>
+                          </ul>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#141824] border border-gray-800">
+                          <h4 className="text-xs font-bold text-teal-400 mb-2">3. التقطيع الدلالي وتقييم التضمين (Chunking)</h4>
+                          <p className="text-[11px] text-gray-400 leading-relaxed mb-3">التأكيد على أن الفقرات قابلة للتقسيم الصحيح لاستخدام التضمين (Vector Embeddings) دون ضياع السياق.</p>
+                          <ul className="text-[10px] text-gray-500 list-disc list-inside space-y-1">
+                            <li>عدم تجزئة الجمل المعقدة وإبقاء الفكرة الكاملة في فقرة مستقلة.</li>
+                            <li>توفير روابط صريحة (Context overlap) بين الفقرة والفقرة التي تليها لربط الأفكار.</li>
+                          </ul>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#141824] border border-gray-800">
+                          <h4 className="text-xs font-bold text-rose-400 mb-2">4. الفلترة الأمنية والامتثال</h4>
+                          <p className="text-[11px] text-gray-400 leading-relaxed mb-3">مسح المحتوى بحثًا عن ثغرات حقن التعليمات ومحفزات التسميم أو البيانات الخاصة (PII).</p>
+                          <ul className="text-[10px] text-gray-500 list-disc list-inside space-y-1">
+                            <li>التأكد من عدم وجود أوامر نظام مخفية (System Prompts Override) ضمن النص.</li>
+                            <li>إزالة أرقام الهواتف أو الحسابات أو الإيميلات المتواجدة خارج نطاق النشر المسموح.</li>
+                          </ul>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#141824] border border-gray-800">
+                          <h4 className="text-xs font-bold text-indigo-400 mb-2">5. إعداد وتوليد التقرير النهائي</h4>
+                          <p className="text-[11px] text-gray-400 leading-relaxed">بناء درجات الامتثال بنسب رقمية واضحة، وتجميع الإصلاحات الضرورية في قائمة واحدة قابلة للتصدير كمهام مع إصدار ملف نقي وجاهز.</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
