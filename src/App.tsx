@@ -17,14 +17,25 @@ import { initAuth, googleSignIn, logout, getAccessToken } from './lib/firebase';
 import WorkspaceImport from './components/WorkspaceImport';
 import CompareView from './components/CompareView';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import extDatabase from './file_extensions_reference_db_v1.1.json';
 
 export default function App() {
   // Main State
-  const [activeTab, setActiveTab] = useState<'overview' | 'chapters' | 'editor' | 'graph' | 'history' | 'steps'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'chapters' | 'editor' | 'graph' | 'history' | 'steps' | 'community'>('overview');
   const [mode, setMode] = useState<'teacher' | 'expert'>('teacher');
   const [files, setFiles] = useState<FileToAudit[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [history, setHistory] = useState<AuditHistoryEntry[]>([]);
+  
+  // Community Proposal Generator & Validator State
+  const [proposalExt, setProposalExt] = useState('yaml');
+  const [proposalGroup, setProposalGroup] = useState<number>(8);
+  const [proposalDesc, setProposalDesc] = useState('صيغة تبادل وتخزين بيانات مهيكلة غنية تدعم مفاتيح التكوين والروابط المنطقية لسهولة القراءة دلالياً.');
+  const [proposalSource, setProposalSource] = useState('https://yaml.org/spec/1.2.2/');
+  const [proposalMime, setProposalMime] = useState('application/x-yaml');
+  const [proposalType, setProposalType] = useState('نصية ودلالية مهيكلة للـ RAG');
+  const [simLog, setSimLog] = useState<string[]>([]);
+  const [simStatus, setSimStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
   
   // Custom Weights and Ignores for Expert Mode
   const [excludedItemIds, setExcludedItemIds] = useState<Set<string>>(new Set());
@@ -54,6 +65,7 @@ export default function App() {
   const [compareMode, setCompareMode] = useState(false);
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
   const [pendingExportAction, setPendingExportAction] = useState<{action: () => void, name: string} | null>(null);
+  const [activeReviewStage, setActiveReviewStage] = useState<number>(1);
 
   const toggleCompareSelect = (id: string) => {
     setSelectedCompareIds(prev => {
@@ -410,6 +422,78 @@ export default function App() {
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     showToast(`تم نسخ ${label} إلى الحافظة!`);
+  };
+
+  const handleSimulatePipeline = () => {
+    if (!proposalExt.trim()) {
+      showToast('الرجاء إدخال امتداد الملف أولاً لإتمام المحاكاة.', 'error');
+      return;
+    }
+    setSimStatus('running');
+    setSimLog([]);
+    
+    const extRaw = proposalExt.trim().toLowerCase().replace(/^\./, '');
+    
+    const logs = [
+      `[Runner] البدء في تشغيل سكريبت التحقق التلقائي لدمج المساهمة...`,
+      `[Runner] استقبال طلب سحب Pull Request رقم #204 دمج فرع feature/${extRaw} إلى dev...`,
+      `[CI/CD] جاري فحص وجود الامتداد في قاعدة البيانات المرجعية لمنع التكرار...`
+    ];
+    
+    setTimeout(() => {
+      // Check duplicate
+      let duplicateGroup: string | null = null;
+      if (extDatabase && extDatabase.groups) {
+        const found = extDatabase.groups.find((g: any) => g.extensions.includes(extRaw));
+        if (found) {
+          duplicateGroup = found.name;
+        }
+      }
+      
+      if (duplicateGroup) {
+        setSimLog([
+          ...logs,
+          `[🚨 خطأ تكرار] الامتداد .${extRaw} موجود مسبقاً في مجموعة: "${duplicateGroup}".`,
+          `[CI/CD] تم إلغاء الدمج ورفض الطلب تلقائياً لدرء تكرار البيانات المعرفية في المنظومة.`,
+          `❌ فشلت السلسلة الأمنية التلقائية للبناء (CI/CD Pipeline Failed).`
+        ]);
+        setSimStatus('failed');
+        showToast('فشلت محاكاة الدمج لوجود امتداد مكرر!', 'error');
+      } else {
+        const nextLogs = [
+          ...logs,
+          `[✓ فريد] تم تأكيد فرادة وحصر الامتداد .${extRaw} (غير موجود مسبقاً).`,
+          `[CI/CD] جاري التحقق من سلامة وصحة مستند المقترح proposal.md وكمال حقول البيانات الوصفية...`,
+          `[MIME Check] تم تحديد MIME Type للامتداد بـ: "${proposalMime || 'غير محدد'}" (MIME سليم).`,
+          `[Metadata Check] نوع البيانات المستهدفة: [${proposalType}].`,
+          `[Source Check] رابط مصدر التوثيق: "${proposalSource || ''}"...`
+        ];
+        
+        setTimeout(() => {
+          if (!proposalSource || proposalSource.length < 5) {
+            setSimLog([
+              ...nextLogs,
+              `[🚨 خطأ مصادر] لم يتم العثور على رابط مصدر توثيق تقني صريح أو السند موثق برابط غير مكتمل.`,
+              `[CI/CD] تم الرفض: يجب تزويدنا بسند أو رابط تقني رسمي (رابط رسمي، لقطة شاشة، ورقة علمية) في ملف المقترح.`,
+              `❌ فشلت السلسلة الأمنية التلقائية للبناء لقلة المصادر.`
+            ]);
+            setSimStatus('failed');
+            showToast('فشل الدمج: يرجى كتابة رابط مرجع تقني صالح!', 'warn');
+          } else {
+            setSimLog([
+              ...nextLogs,
+              `[✓ موثق] تم فحص المصدر المرفق ووجد متطابقاً مع المعايير الشاملة.`,
+              `[CI/CD] جاري فحص تكامل كود واستحداث ملف JSON المرتبط في /extensions...`,
+              `[✓ سليم] محاكاة الإضافة في extensions/_${extRaw}.json متوافقة مع المجموعات الـ 22.`,
+              `[Merge Approved] توافق كامل! جميع الفحوصات الـ 3 اجتازت بنجاح (تنسيق JSON، والفرادة، والبيانات الوصفية ومحلل المصادر).`,
+              `🎉 تم قبول الدمج تلقائياً (Pull Request Merged to dev) والملف تم نقله لقائمة الشرف!`
+            ]);
+            setSimStatus('success');
+            showToast('اكتملت محاكاة الدمج والتحقق بنجاح فائق!', 'success');
+          }
+        }, 1200);
+      }
+    }, 1000);
   };
 
   // Download audited version
@@ -1094,6 +1178,15 @@ security_level: داخلي
                       <ListChecks className="w-4 h-4" />
                       <span>خطوات المراجعة</span>
                     </button>
+                    <button 
+                      onClick={() => setActiveTab('community')}
+                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
+                        activeTab === 'community' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>مستودع المعرفة والدعم</span>
+                    </button>
                   </div>
 
                   <div className="flex gap-2">
@@ -1131,6 +1224,266 @@ security_level: داخلي
                 {/* TAB 1: OVERVIEW ROOM */}
                 {activeTab === 'overview' && (
                   <div className="space-y-6">
+                    {/* Deep Structural Profiling Card (الاستقبال والتحليل الهيكلي العميق) */}
+                    {(() => {
+                      const text = activeFile.content || "";
+                      const charCount = text.length;
+                      const wordCount = text.trim() ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+                      const paragraphCount = text.split(/\n\s*\n/).filter(Boolean).length;
+                      const estChunks = Math.ceil(charCount / 512) || 1;
+                      
+                      // Naming rating
+                      const nameWithNoExt = activeFile.name.substring(0, activeFile.name.lastIndexOf('.'));
+                      const namingRegex = /^[A-Z0-9-]+_[A-Za-z0-9\u0600-\u06FF-]+_v\d+(\.\d+)?$/;
+                      const isNamingValid = namingRegex.test(nameWithNoExt);
+                      
+                      return (
+                        <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 relative overflow-hidden">
+                          <div className="absolute top-0 left-0 w-24 h-24 bg-teal-500/5 rounded-full blur-2xl -z-10 animate-pulse"></div>
+                          
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-800 pb-4 mb-4">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-teal-400 font-mono tracking-wider">الاستقبال والتحليل الهيكلي العميق (إصدار 2.0)</span>
+                              <h3 className="text-sm font-bold text-white mt-0.5 flex items-center gap-1.5">
+                                <Database className="w-4 h-4 text-teal-400" />
+                                <span>بطاقة الخصائص والأوزان الرقمية للمستند</span>
+                              </h3>
+                            </div>
+                            <span className="text-[10px] text-gray-400 font-mono bg-[#0c0e16] px-2.5 py-1 rounded border border-gray-850">
+                              MIME / Class: {activeFile.type === 'md' ? 'text/markdown' : activeFile.type === 'json' ? 'application/json' : 'text/plain'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="bg-[#141824] p-3 rounded-xl border border-gray-850/60">
+                              <span className="text-[10px] text-gray-500 block font-bold">الحجم الكلي</span>
+                              <span className="text-sm font-mono font-bold text-white mt-1 block">{(activeFile.size / 1024).toFixed(2)} ك.ب</span>
+                              <span className="text-[9px] text-gray-400 mt-1 block">{charCount.toLocaleString()} حرف</span>
+                            </div>
+
+                            <div className="bg-[#141824] p-3 rounded-xl border border-gray-850/60">
+                              <span className="text-[10px] text-gray-500 block font-bold">عدد الكلمات والفقرات</span>
+                              <span className="text-sm font-mono font-bold text-white mt-1 block">{wordCount.toLocaleString()} كلمة</span>
+                              <span className="text-[9px] text-gray-400 mt-1 block">{paragraphCount} فقرة دلالية</span>
+                            </div>
+
+                            <div className="bg-[#141824] p-3 rounded-xl border border-gray-850/60">
+                              <span className="text-[10px] text-gray-500 block font-bold">التجزئة والتقطيع المقترح (Chunking)</span>
+                              <span className="text-sm font-mono font-bold text-white mt-1 block">~ {estChunks} مقطع (Chunk)</span>
+                              <span className="text-[9px] text-teal-450 mt-1 block font-sans">تداخل مستهدف: 15%</span>
+                            </div>
+
+                            <div className="bg-[#141824] p-3 rounded-xl border border-gray-850/60">
+                              <span className="text-[10px] text-gray-500 block font-bold">بروتوكول تسمية الملف</span>
+                              <span className={`text-xs font-bold mt-1.5 inline-flex items-center gap-1 ${isNamingValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {isNamingValid ? (
+                                  <>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>مطابق للتسمية M_H</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <XCircle className="w-3.5 h-3.5" />
+                                    <span>غير مطابق - يحتاج تعديل</span>
+                                  </>
+                                )}
+                              </span>
+                              <span className="text-[9px] text-gray-500 mt-1 block truncate" dir="ltr">{activeFile.name}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Interactive 5-Stage Audit Pipeline (مسار المراجعة والاعتماد خماسي المراحل الثابت) */}
+                    {(() => {
+                      // Help calculate subsets for stages
+                      const getStageItemsWithProg = (idPrefixes: string[]) => {
+                        const items = activeFile.report?.items || [];
+                        const stageItems = items.filter(it => idPrefixes.some(pref => it.id.startsWith(pref)));
+                        const applicable = stageItems.filter(it => it.status !== 'NOT_APPLICABLE');
+                        if (applicable.length === 0) return { items: stageItems, prog: 100, passed: 0, total: 0 };
+                        
+                        const passed = applicable.filter(it => it.status === 'PASS').length;
+                        const partial = applicable.filter(it => it.status === 'PARTIAL').length;
+                        const scoreVal = passed + (partial * 0.5);
+                        const calculatedProg = Math.round((scoreVal / applicable.length) * 100);
+                        return { items: stageItems, prog: calculatedProg, passed: passed, total: applicable.length };
+                      };
+
+                      const stageData = [
+                        {
+                          id: 1,
+                          title: "المرحلة الأولى: التحليل الهيكلي وتدقيق البيانات الوصفية",
+                          sub: "تطوير الهيكل، وتدقيق YAML والترميز المرجعي وحقول التسمية",
+                          prefixes: ['1.1', '1.2', '1.3', '2.1'],
+                          icon: Database,
+                          desc: "تتضمن هذه المرحلة التحقق من توفر ترويسة YAML متطابقة مع الدستور المعرفي، بالإضافة إلى التسمية الموحدة للمستند وصيغة الملف والترميزات القياسية في البابين الأول والثاني.",
+                          color: "from-teal-500/10 to-teal-500/5",
+                          border: "border-teal-500/30"
+                        },
+                        {
+                          id: 2,
+                          title: "المرحلة الثانية: التدقيق المعرفي واللغوي (خلو الـ Clichés والهلوسات)",
+                          sub: "تنقية المصطلحات اللغوية، تصفية الكليشيهات وزيادة الكثافة المعرفية دلالياً",
+                          prefixes: ['3.1', '3.2', '4.1', '4.2'],
+                          icon: BookOpen,
+                          desc: "تركز المرحلة الثانية على جودة الصياغة، إزالة الهلوسات المعرفية والكتابة الصحفية/العامة أو الكليشيهات العاطفية التي تؤثر على جودة المتجهات الدلالية.",
+                          color: "from-[#4f46e5]/10 to-[#4f46e5]/5",
+                          border: "border-indigo-500/30"
+                        },
+                        {
+                          id: 3,
+                          title: "المرحلة الثالثة: التقطيع الدلالي وجاهزية الـ Chunking لـ RAG",
+                          sub: "توزيع الحدود الهرمية، تجنب بتر الأفكار، وترتيب العناوين ووسوم Markdown",
+                          prefixes: ['5.1', '5.2', '2.2', '2.3', '2.4'],
+                          icon: Layers,
+                          desc: "تدرس هذه المرحلة قابلية المستند للتقطيع دون فقدان السياق؛ بفحص الهرمية العناوين وتجانس حجم الفقرات وعدم كسر الجمل مع بقاء المعنى كاملاً داخل المقطع الواحد.",
+                          color: "from-[#ec4899]/10 to-[#ec4899]/5",
+                          border: "border-pink-500/30"
+                        },
+                        {
+                          id: 4,
+                          title: "المرحلة الرابعة: الفلترة الأمنية ومكافحة التسميم والـ PII",
+                          sub: "فحص وتطهير الترويدات أو حقن التوجيه والتسريبات وتصنيف السرية",
+                          prefixes: ['7.1', '7.2'],
+                          icon: Shield,
+                          desc: "مرحلة الأمان الصارمة: تكشف عن محاولات حقن التوجيهات (Prompt Injections)، وتصفي البيانات الحساسة أو الشخصية (PII) وتحظر سيناريوهات تسميم البيانات قبل الرفع للمحرك.",
+                          color: "from-amber-500/10 to-amber-500/5",
+                          border: "border-amber-500/30"
+                        },
+                        {
+                          id: 5,
+                          title: "المرحلة الخامسة: تمثيل الكيانات والرسم المعرفي والاعتماد المعرفي",
+                          sub: "استخلاص كيانات Graph RAG، وبناء الصلات، واعتماد النسخة النظيفة المعتمدة",
+                          prefixes: ['6.1', '6.2', '8.1', '9.1', '9.2', '10.1'],
+                          icon: Sliders,
+                          desc: "تتوج المراجعة باستخلاص الكيانات دلالياً (Graph RAG) وبناء علاقات ثنائية الاتجاه، ثم تسليم النسخة المطهرة الخالية تماماً من العيوب المعرفية للإنتاج.",
+                          color: "from-emerald-500/10 to-emerald-500/5",
+                          border: "border-emerald-500/30"
+                        }
+                      ];
+
+                      // Core computed info for active selected stage
+                      const activeStageObj = stageData.find(s => s.id === activeReviewStage) || stageData[0];
+                      const activeStats = getStageItemsWithProg(activeStageObj.prefixes);
+
+                      return (
+                        <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 space-y-5">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-teal-400 font-mono tracking-wider">سير عمل المراجعة والاعتماد خماسي المراحل (إصدار 2.0)</span>
+                              <h3 className="text-sm font-bold text-white mt-0.5">خطوات التدقيق ومستويات الجاهزية الرقمية للمستند</h3>
+                              <p className="text-xs text-gray-400 mt-1 leading-normal">
+                                يمر الملف تلقائياً بخمس فلاتر تدقيق هندسية متتالية لضمان استقرار المعارف وملائمتها للاسترجاع المحوسب.
+                              </p>
+                            </div>
+                            <span className="text-[11px] font-bold text-gray-400 bg-[#0d0f17] px-3 py-1.5 rounded-lg border border-gray-850">
+                              مكتمل: {stageData.filter(s => getStageItemsWithProg(s.prefixes).prog === 100).length} / 5 مراحل
+                            </span>
+                          </div>
+
+                          {/* Horizontal stepper track with scores */}
+                          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 relative">
+                            {stageData.map((stg) => {
+                              const stats = getStageItemsWithProg(stg.prefixes);
+                              const isSelected = activeReviewStage === stg.id;
+                              
+                              return (
+                                <button
+                                  key={stg.id}
+                                  onClick={() => setActiveReviewStage(stg.id)}
+                                  className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between h-28 relative overflow-hidden group select-none ${
+                                    isSelected 
+                                      ? 'bg-[#151c2f] border-teal-500 text-white shadow-md shadow-teal-500/5' 
+                                      : 'bg-[#0f1118] border-gray-800/80 text-gray-400 hover:bg-[#121622] hover:border-gray-750'
+                                  }`}
+                                >
+                                  {/* Progress bar inside button as ambient background */}
+                                  <div 
+                                    className="absolute bottom-0 right-0 h-1 bg-gradient-to-l from-teal-500 to-indigo-500 transition-all duration-500"
+                                    style={{ width: `${stats.prog}%` }}
+                                  ></div>
+
+                                  <div className="flex items-center justify-between w-full">
+                                    <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-mono font-extrabold ${
+                                      isSelected ? 'bg-[#0f1220] text-teal-400 border border-teal-800/60' : 'bg-gray-850 text-gray-500'
+                                    }`}>
+                                      {stg.id}
+                                    </span>
+                                    <span className={`text-[10px] font-mono font-bold ${
+                                      stats.prog >= 85 ? 'text-emerald-400' : stats.prog >= 70 ? 'text-amber-400' : 'text-rose-400'
+                                    }`}>
+                                      {stats.prog}%
+                                    </span>
+                                  </div>
+
+                                  <div>
+                                    <span className="text-[10px] font-bold block truncate mt-1 text-white select-none">
+                                      {stg.title.split(': ')[1]}
+                                    </span>
+                                    <span className="text-[9px] text-gray-500 block truncate select-none mt-0.5">
+                                      {stats.passed} من {stats.total} بنود نشطة
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Stage details panel showing applicable criteria */}
+                          <div className={`p-4 rounded-xl border bg-gradient-to-b ${activeStageObj.color} ${activeStageObj.border} space-y-4`}>
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-gray-800/50 pb-2.5">
+                              <div className="flex items-center gap-2">
+                                <activeStageObj.icon className="w-5 h-5 text-teal-400" />
+                                <div>
+                                  <h4 className="text-xs font-bold text-white">{activeStageObj.title}</h4>
+                                  <p className="text-[10px] text-gray-400">{activeStageObj.sub}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs px-2.5 py-1 rounded-full font-bold font-mono ${
+                                  activeStats.prog >= 85 ? 'bg-emerald-950 text-emerald-400 border border-emerald-900/60' : 
+                                  activeStats.prog >= 70 ? 'bg-amber-950 text-amber-400 border border-amber-900/60' : 
+                                  'bg-rose-950 text-rose-400 border border-rose-900/60'
+                                }`}>
+                                  درجة الجاهزية: {activeStats.prog}%
+                                </span>
+                              </div>
+                            </div>
+
+                            <p className="text-xs text-gray-300 leading-relaxed">{activeStageObj.desc}</p>
+
+                            {/* Sub items in this stage */}
+                            <div className="space-y-2">
+                              <span className="text-[10px] font-extrabold uppercase text-gray-400">البنود المشمولة بهذه المرحلة المعتمدة:</span>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                {activeStats.items.map((it) => (
+                                  <div key={it.id} className="p-2.5 bg-[#0e111a]/80 rounded-lg border border-gray-850 flex items-start justify-between gap-3 font-sans hover:border-gray-800 transition">
+                                    <div className="space-y-0.5 min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-[10px] font-mono font-bold text-teal-400">{it.id}</span>
+                                        <span className="font-extrabold text-white text-[11px] truncate">{it.name}</span>
+                                      </div>
+                                      <p className="text-[10px] text-gray-400 truncate mt-0.5">{it.description}</p>
+                                    </div>
+                                    <span className={`text-[10px] font-bold whitespace-nowrap px-1.5 py-0.5 rounded ${
+                                      it.status === 'PASS' ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-950' : 
+                                      it.status === 'FAIL' ? 'bg-rose-950/40 text-rose-400 border border-rose-950' :
+                                      it.status === 'PARTIAL' ? 'bg-amber-950/40 text-amber-400 border border-amber-950' : 
+                                      'bg-gray-900/65 text-gray-400 border border-gray-800'
+                                    }`}>
+                                      {it.status === 'PASS' ? 'مجتاز ✓' : it.status === 'FAIL' ? 'راسب ✗' : it.status === 'PARTIAL' ? 'جزئياً ⚠️' : 'مستثنى ⊘'}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Priority Fixes Alert Box */}
                     <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5">
                       <div className="flex items-center justify-between mb-4">
@@ -1166,7 +1519,7 @@ security_level: داخلي
                                   <span className="text-xs font-mono font-bold text-indigo-400 bg-indigo-950 px-2 py-0.5 rounded border border-indigo-800">البند {fix.itemId}</span>
                                   <h4 className="text-xs font-bold text-white">{fix.name || `فشل في تدرج البند`}</h4>
                                   <span className={`text-[10px] scale-90 px-1.5 py-0.5 rounded font-bold ${
-                                    fix.priority === 'MUST_HAVE' ? 'bg-rose-950 text-rose-400 border border-rose-900' : 'bg-amber-950 text-amber-400 border border-amber-900'
+                                    fix.priority === 'MUST_HAVE' ? 'bg-rose-950 text-rose-450 border border-rose-900' : 'bg-amber-950 text-amber-440 border border-amber-900'
                                   }`}>
                                     {fix.priority === 'MUST_HAVE' ? 'إجرائي حرج (Must Have)' : 'موصى به (Should Have)'}
                                   </span>
@@ -1195,7 +1548,7 @@ security_level: داخلي
                       {/* Quick Auto Clean Widget */}
                       {activeFile.report.topFixes.length > 0 && (
                         <div className="mt-4 p-3.5 bg-indigo-950/20 border border-indigo-900/40 rounded-xl flex items-center justify-between gap-3 text-xs">
-                          <p className="text-indigo-300">
+                          <p className="text-indigo-300 font-sans">
                             💡 **ميزة التطهير السريع**: يمكن للمدقق إصلاح YAML، وإزالة emojis المشوهة، وتوحيد الأرقام (123) آلياً.
                           </p>
                           <button 
@@ -1252,7 +1605,7 @@ security_level: داخلي
                                         if (active && payload && payload.length) {
                                           const data = payload[0].payload as AuditHistoryEntry;
                                           return (
-                                            <div className="bg-[#11141e] border border-gray-800 p-3 rounded-lg text-xs leading-relaxed space-y-1 text-right shadow-xl">
+                                            <div className="bg-[#11141e] border border-gray-800 p-3 rounded-lg text-xs leading-relaxed space-y-1 text-right shadow-xl font-sans">
                                               <p className="text-[10px] text-teal-400 font-mono font-bold">{data.date}</p>
                                               <p className="text-white font-bold">درجة الامتثال: <span className="text-teal-400">{data.complianceScore}%</span></p>
                                               <p className="text-[10px] text-gray-400">
@@ -1276,7 +1629,7 @@ security_level: داخلي
                                   </LineChart>
                                 </ResponsiveContainer>
                               </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px] text-gray-450">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px] text-gray-400">
                                 <div className="bg-[#141824] p-2.5 rounded-xl border border-gray-800 text-center">
                                   <span>🚀 المحاولة الأولى: <strong className="text-white font-bold">{fileHistory[0].complianceScore}%</strong></span>
                                 </div>
@@ -1299,53 +1652,184 @@ security_level: داخلي
                       );
                     })()}
 
-                    {/* Simple mandatory template summary according to additional instructions */}
-                    <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 space-y-4">
-                      <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-                        <h4 className="text-xs font-extrabold tracking-wider text-gray-400">القالب الإلزامي للتقرير القانوني المعتمد</h4>
-                        <button 
-                          onClick={() => {
-                            const markdownReport = `# تقرير فحص الملف: ${activeFile.name}
-**التاريخ:** ${new Date().toISOString().split('T')[0]}
-**نوع الملف:** ${activeFile.type.toUpperCase()}
-**درجة الامتثال:** ${activeFile.report?.complianceScore}%
+                    {/* Upgraded Certified Arabic Report (قالب التقرير الإلزامي والمعتمد للإصدار الثاني) */}
+                    {(() => {
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      const fileTypeFormatted = activeFile.type.toUpperCase();
+                      const complianceScore = activeFile.report?.complianceScore || 0;
+                      
+                      const passedCount = activeFile.report?.summary.passed || 0;
+                      const failedCount = activeFile.report?.summary.failed || 0;
+                      const partialCount = activeFile.report?.summary.partial || 0;
+                      const naCount = activeFile.report?.summary.notApplicable || 0;
 
-## ملخص سريع
-- ✅ البنود المجتازة: ${activeFile.report?.summary.passed}
-- ❌ البنود الراسبة: ${activeFile.report?.summary.failed}
-- ⚠️ البنود الجزئية: ${activeFile.report?.summary.partial}
-- ⊘ غير مطبقة: ${activeFile.report?.summary.notApplicable}
+                      // Build the exact Arabic template requested by requirements
+                      let exactReportText = `# تقرير فحص الملف: ${activeFile.name}\n`;
+                      exactReportText += `**التاريخ:** ${todayStr}\n`;
+                      exactReportText += `**نوع الملف:** ${fileTypeFormatted}\n`;
+                      exactReportText += `**درجة الامتثال:** ${complianceScore}%\n\n`;
+                      
+                      exactReportText += `## ملخص سريع\n`;
+                      exactReportText += `- ✅ البنود المجتازة: ${passedCount}\n`;
+                      exactReportText += `- ❌ البنود الراسبة: ${failedCount}\n`;
+                      exactReportText += `- ⚠️ البنود الجزئية: ${partialCount}\n`;
+                      exactReportText += `- ⊘ غير مطبقة: ${naCount}\n\n`;
 
-## أهم 3 إصلاحات ضرورية
-${activeFile.report?.topFixes.slice(0, 3).map((f, i) => `${i+1}. [البند ${f.itemId}] ${f.recommendation}`).join('\n')}
-`;
-                            copyToClipboard(markdownReport, 'التقرير الإلزامي بصيغة Markdown');
-                          }}
-                          className="text-xs text-teal-400 hover:text-teal-300 transition flex items-center gap-1"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>نسخ تقرير الـ Markdown الموحد</span>
-                        </button>
-                      </div>
+                      exactReportText += `## تسلسل الإجراءات - أهم الإصلاحات الضرورية (للإنشاء في Google Tasks)\n`;
+                      if (activeFile.report?.topFixes && activeFile.report.topFixes.length > 0) {
+                        activeFile.report.topFixes.forEach((fix, index) => {
+                          const priorityLabel = fix.priority === 'MUST_HAVE' ? 'حرج MUST_HAVE' : 'موصى به Should_Have';
+                          exactReportText += `${index + 1}. [البند ${fix.itemId} - ${priorityLabel}] ${fix.recommendation}\n`;
+                        });
+                      } else {
+                        exactReportText += `1. لا توجد إصلاحات مطلوبة عاجلة. الملف متوافق بالكامل.\n`;
+                      }
+                      
+                      exactReportText += `\n## تفاصيل الفحص (حسب الأبواب العشرة)\n`;
+                      
+                      // Add table for Chapter 1 as requested in requirements prompt
+                      exactReportText += `### الباب الأول: الهوية والبيانات الوصفية\n`;
+                      exactReportText += `| البند | النتيجة | التوصية |\n`;
+                      exactReportText += `|-------|---------|----------|\n`;
+                      
+                      const chap1Items = activeFile.report?.items.filter(it => it.chapter === 1) || [];
+                      chap1Items.forEach(it => {
+                        const statusAr = it.status === 'PASS' ? 'نعم' : it.status === 'FAIL' ? 'لا' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى';
+                        const recText = it.status === 'PASS' ? 'الملف متطابق' : it.recommendation || 'يفضل المراجعة';
+                        exactReportText += `| ${it.id} ${it.name} | ${statusAr} | ${recText.replace(/\n/g, ' ')} |\n`;
+                      });
 
-                      <div className="bg-[#0c0e16] p-4 rounded-xl border border-gray-900 font-mono text-[11px] text-gray-300 leading-relaxed overflow-x-auto select-all">
-                        <p className="text-gray-500 font-bold mb-2"># تقرير فحص الملف: {activeFile.name}</p>
-                        <p>**التاريخ:** {new Date().toISOString().split('T')[0]}</p>
-                        <p>**نوع الملف:** {activeFile.type.toUpperCase()}</p>
-                        <p>**درجة الامتثال:** {activeFile.report.complianceScore}%</p>
-                        <p className="mt-2 text-indigo-400 font-bold">## ملخص سريع</p>
-                        <p>- ✅ البنود المجتازة: {activeFile.report.summary.passed}</p>
-                        <p>- ❌ البنود الراسبة: {activeFile.report.summary.failed}</p>
-                        <p>- ⚠️ البنود الجزئية: {activeFile.report.summary.partial}</p>
-                        <p>- ⊘ غير مطبقة: {activeFile.report.summary.notApplicable}</p>
-                        <p className="mt-2 text-indigo-400 font-bold">## أهم 3 إصلاحات ضرورية (حسب الأولوية)</p>
-                        {activeFile.report.topFixes.slice(0, 3).map((f, i) => (
-                          <p key={i}>{i+1}. [البند {f.itemId}] {f.recommendation.substring(0, 80)}...</p>
-                        ))}
-                      </div>
-                    </div>
+                      // Let's add remaining chapters representation
+                      exactReportText += `\n### الباب الثاني: الهيكل والتنظيم الداخلي\n`;
+                      exactReportText += `| البند | النتيجة | التوصية |\n`;
+                      exactReportText += `|-------|---------|----------|\n`;
+                      const chap2Items = activeFile.report?.items.filter(it => it.chapter === 2) || [];
+                      chap2Items.forEach(it => {
+                        const statusAr = it.status === 'PASS' ? 'نعم' : it.status === 'FAIL' ? 'لا' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى';
+                        exactReportText += `| ${it.id} ${it.name} | ${statusAr} | ${it.recommendation?.replace(/\n/g, ' ') || 'متطابق'} |\n`;
+                      });
+
+                      exactReportText += `\n## ملاحظات إضافية وتوصيات التصدير\n`;
+                      exactReportText += `(يُرجى عدم تخطي التحذير الأمني الخاص بالتصدير إذا تواجدت أخطاء حرجة يجب معالجتها بالمحرر المدمج قبل الحفظ في Keep أو الإرسال كـ Gmail).\n`;
+
+                      return (
+                        <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 space-y-4">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-gray-800 pb-3 gap-3">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-indigo-400 font-mono tracking-wider">التقرير الموحد الموثق للإصدار الثاني</span>
+                              <h4 className="text-xs font-bold text-white flex items-center gap-1.5 mt-0.5 font-sans">
+                                <ListChecks className="w-4 h-4 text-indigo-400" />
+                                <span>قالب التقرير القانوني المعتمد في الدستور المعرفي</span>
+                              </h4>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                              <button 
+                                onClick={() => copyToClipboard(exactReportText, 'التقرير الموحد بصيغة Markdown')}
+                                className="text-[10px] bg-[#1c2234] hover:bg-[#252d43] border border-gray-800 text-teal-400 font-bold py-1.5 px-3 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>نسخ التقرير</span>
+                              </button>
+                              
+                              <button 
+                                onClick={() => saveToKeep(`تقرير فحص: ${activeFile.name}`, exactReportText)}
+                                className="text-[10px] bg-[#1c2234] hover:bg-[#252d43] border border-yellow-900/60 text-yellow-400 font-bold py-1.5 px-3 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <StickyNote className="w-3.5 h-3.5" />
+                                <span>حفظ في Keep 📝</span>
+                              </button>
+
+                              <button 
+                                onClick={() => shareViaEmail(activeFile.name, complianceScore, exactReportText)}
+                                className="text-[10px] bg-[#1c2234] hover:bg-[#252d43] border border-rose-900/60 text-rose-400 font-bold py-1.5 px-3 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <Mail className="w-3.5 h-3.5" />
+                                <span>إرسال بـ Gmail 📩</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Warning for critical MUST_HAVE issues */}
+                          {failedCount > 0 && activeFile.report.topFixes.some(f => f.priority === 'MUST_HAVE') && (
+                            <div className="bg-rose-950/20 border border-rose-900/40 p-3 rounded-xl text-rose-400 text-xs flex items-start gap-2 leading-relaxed">
+                              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 animate-bounce" />
+                              <p>
+                                <strong>تنبيه أمني صارم (Dastoor Rule 7.2)</strong>: يحتوى هذا المستند على بنود غير مجتازة تنطوي على أخطاء حرجة جداً (MUST_HAVE). ننصح بشدة بتطهير المستند عبر <strong>المحرر المدمج (Diff Editor)</strong> قبل تصدير المعارف أو حفظها في Google Keep لتفادي تسريب ثغرات الركام الصياغي لأنظمتك الذكية.
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Render preview in elegant visual format */}
+                          <div className="bg-[#0c0e16] p-4 rounded-xl border border-gray-900 font-mono text-[11px] text-gray-300 leading-relaxed overflow-x-auto max-h-[380px] overflow-y-auto relative scrollbar-thin scrollbar-thumb-gray-800">
+                            <div className="absolute top-2 left-2 bg-[#141824] px-1.5 py-0.5 rounded border border-gray-850 text-gray-500 text-[9px] select-none">
+                              PREVIEW MODE: STANDARD ARABIC TEMPLATE
+                            </div>
+                            
+                            <h1 className="text-white text-xs font-bold font-sans border-b border-gray-850 pb-2 mb-2"># تقرير فحص الملف: {activeFile.name}</h1>
+                            <p className="text-gray-400">**التاريخ:** {todayStr}</p>
+                            <p className="text-gray-400">**نوع الملف:** {fileTypeFormatted}</p>
+                            <p className="text-gray-400">**درجة الامتثال:** {complianceScore}%</p>
+                            
+                            <h2 className="text-indigo-405 text-xs font-bold font-sans mt-4 mb-2">## ملخص سريع</h2>
+                            <p className="text-emerald-400">- ✅ البنود المجتازة: {passedCount}</p>
+                            <p className="text-rose-400">- ❌ البنود الراسبة: {failedCount}</p>
+                            <p className="text-amber-405">- ⚠️ البنود الجزئية: {partialCount}</p>
+                            <p className="text-gray-500">- ⊘ غير مطبقة: {naCount}</p>
+                            
+                            <h2 className="text-indigo-405 text-xs font-bold font-sans mt-4 mb-2">## تسلسل الإجراءات - أهم الإصلاحات الضرورية (للإنشاء في Google Tasks)</h2>
+                            {activeFile.report?.topFixes && activeFile.report.topFixes.length > 0 ? (
+                              <div className="space-y-1.5 font-sans">
+                                {activeFile.report.topFixes.map((f, i) => (
+                                  <p key={i} className="text-amber-400 pl-2 border-l border-amber-900">
+                                    {i+1}. [البند {f.itemId} - {f.priority === 'MUST_HAVE' ? 'حرج MUST_HAVE' : 'موصى به Should_Have'}] {f.recommendation}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-emerald-400">1. الملف سليم تماماً ولا يستوجب أي خطط عمل ملحقة.</p>
+                            )}
+
+                            <h2 className="text-indigo-405 text-xs font-bold font-sans mt-4 mb-2">## تفاصيل الفحص (حسب الأبواب العشرة)</h2>
+                            <h3 className="text-teal-400 text-[11px] font-sans font-bold mt-2 mb-1">### الباب الأول: الهوية والبيانات الوصفية</h3>
+                            
+                            {/* Standard preview table of Chapter 1 */}
+                            <div className="bg-[#0f1118] border border-gray-900 rounded-lg overflow-hidden mt-2 font-sans">
+                              <table className="w-full text-[10px] text-right">
+                                <thead>
+                                  <tr className="bg-gray-950/80 border-b border-gray-900 text-gray-400 text-[9px]">
+                                    <th className="p-2">البند</th>
+                                    <th className="p-2">النتيجة</th>
+                                    <th className="p-2">توصية الإصلاح</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-900">
+                                  {chap1Items.map((it) => (
+                                    <tr key={it.id} className="hover:bg-[#141824]/30">
+                                      <td className="p-2 font-mono text-teal-400 font-bold whitespace-nowrap">{it.id} - {it.name}</td>
+                                      <td className="p-2 whitespace-nowrap">
+                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                          it.status === 'PASS' ? 'text-emerald-450 bg-emerald-950/20' : 
+                                          it.status === 'FAIL' ? 'text-rose-450 bg-rose-950/20' : 
+                                          it.status === 'PARTIAL' ? 'text-amber-450 bg-amber-950/20' : 'text-gray-500'
+                                        }`}>
+                                          {it.status === 'PASS' ? 'نعم ✓' : it.status === 'FAIL' ? 'لا ✗' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى'}
+                                        </span>
+                                      </td>
+                                      <td className="p-2 text-gray-400 text-[10px] max-w-xs truncate">{it.status === 'PASS' ? 'مطابق' : it.recommendation}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
+
+
 
                 {/* TAB 2: CHAPTERS DETAILED LIST */}
                 {activeTab === 'chapters' && (
@@ -1948,6 +2432,362 @@ ${activeFile.report?.topFixes.slice(0, 3).map((f, i) => `${i+1}. [البند ${f
                         <div className="p-4 rounded-xl bg-[#141824] border border-gray-800">
                           <h4 className="text-xs font-bold text-indigo-400 mb-2">5. إعداد وتوليد التقرير النهائي</h4>
                           <p className="text-[11px] text-gray-400 leading-relaxed">بناء درجات الامتثال بنسب رقمية واضحة، وتجميع الإصلاحات الضرورية في قائمة واحدة قابلة للتصدير كمهام مع إصدار ملف نقي وجاهز.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 7: COMMUNITY DEV & SUPPORT PORTAL */}
+                {activeTab === 'community' && (
+                  <div className="space-y-8 animate-fade-in">
+                    {/* Welcome banner */}
+                    <div className="bg-gradient-to-l from-indigo-950/40 via-[#11141e] to-[#11141e] border border-gray-805/80 p-5 rounded-2xl">
+                      <div className="flex items-center gap-3">
+                        <Users className="w-8 h-8 text-indigo-400" />
+                        <div>
+                          <h3 className="text-base font-bold text-white">منصة الدعم المجتمعي وهندسة البيانات المعرفية</h3>
+                          <p className="text-xs text-gray-400 mt-1">المستندات التوجيهية وسير العمل ومسارات المساعدة في إثراء وتصنيف مجموعات الامتداد وتطهير بيانات الاسترجاع.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Repository and Workflow strategy */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* 1. Repository Structure info */}
+                      <div className="bg-[#11141e] border border-gray-800/80 p-5 rounded-2xl space-y-4">
+                        <h4 className="text-sm font-bold text-white border-b border-gray-850 pb-2 flex items-center gap-2">
+                          <Database className="w-4 h-4 text-emerald-400" />
+                          <span>بنية المستودع وتفرع الكود (Git Repository Structure)</span>
+                        </h4>
+                        <div className="space-y-4 text-xs">
+                          <div className="flex items-start gap-3">
+                            <span className="px-2 py-0.5 font-mono text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 rounded">main branch</span>
+                            <div className="space-y-0.5">
+                              <p className="font-bold text-white">الفرع الرئيسي المستقر</p>
+                              <p className="text-gray-400 text-[11px] leading-relaxed">يحتوي حصراً على الملفات والمعارف الموثقة والجاهزة للإنتاج، ويغذي الأقسام الحيوية للتحصيل الدلالي بامتثال 100%.</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-start gap-3">
+                            <span className="px-2 py-0.5 font-mono text-[10px] bg-indigo-950 text-indigo-400 border border-indigo-800 rounded">dev branch</span>
+                            <div className="space-y-0.5">
+                              <p className="font-bold text-white">فرع التطوير المستمر</p>
+                              <p className="text-gray-400 text-[11px] leading-relaxed">المستقر التدريجي الذي يتم تجميع الإضافات البرمجية والامتدادات المعرفية الجديدة داخله للتمحيص والاختبار والـ CI/CD.</p>
+                            </div>
+                          </div>
+
+                          <div className="border-t border-gray-800 pt-3 space-y-3">
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-teal-400 font-mono text-[11px] shrink-0 font-bold">📁 extensions/</span>
+                              <p className="text-gray-400 text-[11px]">يتضمن ملف JSON مستقل لكل مجموعة معرفية (مثل <code className="font-mono text-gray-300">extensions/1_documents.json</code>) لتمكين التحديث الإضافي المنفصل بسهولة فائقة.</p>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-teal-400 font-mono text-[11px] shrink-0 font-bold">📁 proposals/</span>
+                              <p className="text-gray-400 text-[11px]">يحتوي على مسودات المقترحات بصيغة Markdown (<code className="font-mono text-gray-300">proposal.md</code>) لشرح السند من روابط علمية أو لقطات والبيانات الوصفية.</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2. Automated Action / Workflow CI/CD */}
+                      <div className="bg-[#11141e] border border-gray-800/80 p-5 rounded-2xl space-y-4">
+                        <h4 className="text-sm font-bold text-white border-b border-gray-850 pb-2 flex items-center gap-2">
+                          <Activity className="w-4 h-4 text-indigo-400" />
+                          <span>سير العمل وسلسلة التحقق الذكية (GitHub Actions CI/CD)</span>
+                        </h4>
+                        <p className="text-xs text-gray-400 leading-relaxed">
+                          عند رفع طلب سحب (Pull Request) لفرع <code className="text-indigo-400 font-mono">dev</code>، يقوم خادم التكامل والتحقق التلقائي بتشغيل حزمة سلاسل أمنية صارمة تضمن الموثوقية:
+                        </p>
+                        <ul className="text-xs text-gray-400 space-y-3 pr-2">
+                          <li className="flex items-start gap-2.5">
+                            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1.5 flex-shrink-0" />
+                            <div>
+                              <strong className="text-white">منع التكرار التراكمي:</strong>
+                              <p className="text-[11px] text-gray-500 mt-0.5">يقارن السكريبت الامتدادات الجديدة بقاعدة البيانات الموثقة ويرفض فوراً أي امتداد تم تصنيفه أو تخصيصه مسبقاً لمنع التضارب.</p>
+                            </div>
+                          </li>
+                          <li className="flex items-start gap-2.5">
+                            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1.5 flex-shrink-0" />
+                            <div>
+                              <strong className="text-white">سلامة وصلاحية صياغة الـ JSON:</strong>
+                              <p className="text-[11px] text-gray-500 mt-0.5">التحقق الهيكلي من متانة محاذاة أكواد ملفات المجموعات الـ 22 وصلاحية الـ syntax لحفظ السند المعرفي.</p>
+                            </div>
+                          </li>
+                          <li className="flex items-start gap-2.5">
+                            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1.5 flex-shrink-0" />
+                            <div>
+                              <strong className="text-white">أوراق التوثيق والمصادر الكاملة:</strong>
+                              <p className="text-[11px] text-gray-500 mt-0.5">يجب تزويدنا برابط رسمي أو مستند علمي أو لقطة شاشة تدل على خواص الامتداد ومحددات الـ MIME Type للحفظ دلالياً.</p>
+                            </div>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    {/* Interactive Proposal Generator and Simulator */}
+                    <div className="bg-[#11141e] border border-gray-805/85 rounded-2xl p-5 space-y-6">
+                      <div>
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-teal-405" />
+                          <span>أداة إنشاء ومحاكاة مقترحات الامتداد (Proposal Builder & Pipeline Simulator)</span>
+                        </h4>
+                        <p className="text-xs text-gray-400 mt-1">قم بتعبئة حقول الامتداد الجديد لتوليد ملف المقترح المعتمد فوراً واختبار دمج الكود في بيئة الـ CI/CD آلياً.</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-2">
+                        {/* Interactive Form */}
+                        <div className="space-y-4 bg-[#0f111a] border border-gray-850 p-4 rounded-xl">
+                          <h5 className="text-xs font-bold text-gray-300">البيانات الوصفية للامتداد</h5>
+                          
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-[11px] text-gray-400 mb-1">الامتداد البرمجي (بدون نقطة):</label>
+                              <div className="relative">
+                                <span className="absolute right-3 top-2 text-xs text-gray-500">.</span>
+                                <input 
+                                  type="text" 
+                                  value={proposalExt}
+                                  onChange={(e) => setProposalExt(e.target.value.replace('.', ''))}
+                                  className="w-full bg-[#161a29] border border-gray-800 rounded-lg pr-5 pl-2 py-1.5 text-xs text-white font-mono" 
+                                  placeholder="yaml"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-gray-400 mb-1">المجموعة المعرفية المقترحة:</label>
+                              <select 
+                                value={proposalGroup}
+                                onChange={(e) => setProposalGroup(Number(e.target.value))}
+                                className="w-full bg-[#161a29] border border-gray-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                              >
+                                <option value="1">1. ملفات النصوص والوثائق</option>
+                                <option value="2">2. ملفات الصور</option>
+                                <option value="3">3. ملفات الفيديو</option>
+                                <option value="4">4. ملفات الصوت</option>
+                                <option value="5">5. ملفات البرمجة</option>
+                                <option value="6">6. ملفات قواعد البيانات</option>
+                                <option value="7">7. ملفات الضغط والأرشيف</option>
+                                <option value="8">8. ملفات الإعداد والتكوين</option>
+                                <option value="9">9. ملفات البرمجيات والأدوات</option>
+                                <option value="10">10. ملفات الإنترنت والشبكات</option>
+                                <option value="11">11. ملفات التصميم والرسوميات</option>
+                                <option value="12">12. ملفات الذكاء الاصطناعي والتعلم الآلي</option>
+                                <option value="13">13. ملفات الحاويات والمحاكاة الافتراضية</option>
+                                <option value="14">14. ملفات الأمن والتشفير</option>
+                                <option value="15">15. ملفات البريد الإلكتروني والتخاطب</option>
+                                <option value="16">16. ملفات الترجمة والتوطين</option>
+                                <option value="17">17. ملفات الألعاب ومحركاتها</option>
+                                <option value="18">18. ملفات الطباعة والنشر المكتبي</option>
+                                <option value="19">19. ملفات الأجهزة والبرامج الثابتة</option>
+                                <option value="20">20. ملفات الرسوم العلمية والهندسية</option>
+                                <option value="21">21. ملفات Apple (iOS/macOS)</option>
+                                <option value="22">22. ملفات متفرقة</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-[11px] text-gray-400 mb-1">نوع البيانات المقترن الحاسم:</label>
+                              <select 
+                                value={proposalType}
+                                onChange={(e) => setProposalType(e.target.value)}
+                                className="w-full bg-[#161a29] border border-gray-800 rounded-lg px-2 py-1.5 text-xs text-white"
+                              >
+                                <option value="نصية ودلالية مهيكلة للـ RAG">نصية ودلالية مهيكلة للـ RAG</option>
+                                <option value="ملفات برمجية حساسة للتقسيم">ملفات برمجية حساسة للتقسيم</option>
+                                <option value="وسائط متعددة سردية متطلبة للتفريغ">وسائط متعددة (تطلب تفريغ)</option>
+                                <option value="بكسلية تطلب قارئ بصري (OCR)">بكسلية تطلب قارئ بصري</option>
+                                <option value="بيناري ثنائية معقدة ومضغوطة">ثنائية معقدة أو مضغوطة</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-gray-400 mb-1">MIME Type المعياري:</label>
+                              <input 
+                                type="text"
+                                value={proposalMime}
+                                onChange={(e) => setProposalMime(e.target.value)}
+                                className="w-full bg-[#161a29] border border-gray-800 rounded-lg px-2 py-1.5 text-xs text-white font-mono"
+                                placeholder="text/yaml"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] text-gray-400 mb-1">مصدر التوثيق أو الرابط العلمي (رابط رسمي، لقطة شاشة، ورقة علمية):</label>
+                            <input 
+                              type="text" 
+                              value={proposalSource}
+                              onChange={(e) => setProposalSource(e.target.value)}
+                              className="w-full bg-[#161a29] border border-gray-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono text-left"
+                              dir="ltr"
+                              placeholder="https://yaml.org/spec/1.2.2/"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] text-gray-400 mb-1">الوصف الموجه والخصائص التضمينية:</label>
+                            <textarea 
+                              value={proposalDesc}
+                              onChange={(e) => setProposalDesc(e.target.value)}
+                              rows={3}
+                              className="w-full bg-[#161a29] border border-gray-800 rounded-lg p-2 text-xs text-white focus:border-indigo-500 outline-none"
+                              placeholder="موجز توضيحي للامتداد وسلوكه المتوقع في أنظمة RAG..."
+                            />
+                          </div>
+
+                          <div className="flex gap-3 pt-2">
+                            <button 
+                              onClick={() => {
+                                const doc = `# مقترح إضافة امتداد جديد: .${proposalExt.trim().toLowerCase().replace(/^\./, '')}
+
+## معلومات الامتداد الأساسية
+- **الامتداد:** .${proposalExt.trim().toLowerCase().replace(/^\./, '')}
+- **المجموعة المقترحة:** Group ${proposalGroup}
+- **النوعية الاستراتيجية للبيانات:** ${proposalType}
+- **MIME Type:** ${proposalMime}
+
+## مصدر التوثيق والسند التقني
+- **الرابط/المرجع المرجعي للمستند:** ${proposalSource || 'لم يحدد بعد'}
+
+## الخواص والسمات الدلالية الموصى بها في أنظمة RAG
+- ${proposalDesc}`;
+                                copyToClipboard(doc, 'ملف المقترح proposal.md');
+                              }}
+                              className="flex-1 py-2.5 bg-[#1a2135] hover:bg-[#232c45] border border-gray-800 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+                            >
+                              <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                              <span>توليد ونسخ المقترح</span>
+                            </button>
+                            
+                            <button
+                              onClick={handleSimulatePipeline}
+                              disabled={simStatus === 'running'}
+                              className="flex-1 py-2.5 bg-gradient-to-l from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white font-bold text-xs rounded-xl transition shadow-md shadow-teal-500/10 flex items-center justify-center gap-1"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${simStatus === 'running' ? 'animate-spin' : ''}`} />
+                              <span>محاكاة دمج الطلب (CI/CD)</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Proposal Template & Simulated Terminal Output */}
+                        <div className="space-y-4">
+                          <h5 className="text-xs font-bold text-gray-300">مخرجات الحلبة وملخص فحص البناء</h5>
+                          
+                          {/* Simulated Terminal */}
+                          <div className="bg-[#090b11] border border-gray-900 rounded-xl p-4 font-mono text-[11px] leading-relaxed relative min-h-[190px] flex flex-col justify-between shadow-inner">
+                            <div className="absolute top-2 left-3 flex gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                              <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                            </div>
+                            <span className="text-[9px] text-gray-650 absolute top-2 right-4 font-bold">GITHUB PR RUNNER v1.02</span>
+
+                            <div className="space-y-1.5 mt-4 flex-1">
+                              {simLog.length === 0 ? (
+                                <div className="text-gray-500 text-center py-12 flex flex-col items-center justify-center gap-2">
+                                  <Users className="w-8 h-8 text-gray-700 opacity-60" />
+                                  <p>بانتظار إطلاق محاكاة الدمج... اضغط "محاكاة دمج الطلب (CI/CD)" لرصد خطوات الفحص والقبول للمستودع.</p>
+                                </div>
+                              ) : (
+                                <div className="space-y-1.5 select-text">
+                                  {simLog.map((log, idx) => {
+                                    let textColor = "text-gray-400";
+                                    if (log.includes('[✓') || log.includes('🎉')) textColor = "text-emerald-450 font-bold";
+                                    else if (log.includes('[🚨') || log.includes('❌')) textColor = "text-rose-400 font-bold";
+                                    else if (log.includes('[⚠️')) textColor = "text-amber-400 font-bold";
+                                    else if (log.includes('[CI/CD]')) textColor = "text-indigo-400 font-bold";
+                                    
+                                    return (
+                                      <p key={idx} className={`${textColor} break-all`}>{log}</p>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+
+                            {simStatus !== 'idle' && (
+                              <div className="border-t border-[#181a24] pt-2.5 mt-2.5 flex items-center justify-between text-[10px]">
+                                <span className="text-gray-500 font-bold">سلسلة Actions:</span>
+                                {simStatus === 'running' && <span className="text-indigo-400 animate-pulse font-bold">جاري الفحص التلقائي والمصادقة...</span>}
+                                {simStatus === 'success' && <span className="text-emerald-400 font-bold">✓ تم اجتياز الفحوصات والدمج معتمد!</span>}
+                                {simStatus === 'failed' && <span className="text-rose-450 font-bold">❌ فشلت السلسلة. تم إلغاء الدمج وحفظ الامتثال.</span>}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Markdown Code block preview */}
+                          <div className="bg-[#0f111a] border border-gray-850 rounded-xl p-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-gray-500 font-bold">مسودة proposals/proposal.md المولدة</span>
+                              <span className="text-[9px] bg-indigo-950 text-indigo-400 font-bold px-1.5 py-0.5 rounded font-mono">Markdown</span>
+                            </div>
+                            <pre className="text-[10px] text-gray-400 bg-[#07090f] p-2.5 rounded-lg overflow-x-auto max-h-36 font-mono border border-gray-900 whitespace-pre-wrap select-all">
+{`# مقترح إضافة امتداد جديد: .${proposalExt.trim().toLowerCase().replace(/^\./, '')}
+
+## معلومات الامتداد الأساسية
+- **الامتداد:** .${proposalExt.trim().toLowerCase().replace(/^\./, '')}
+- **المجموعة المقترحة:** Group ${proposalGroup}
+- **النوعية الاستراتيجية للبيانات:** ${proposalType}
+- **MIME Type:** ${proposalMime}
+
+## مصدر التوثيق والسند التقني
+- **الرابط/المرجع المرجعي للمستند:** ${proposalSource || 'لم يحدد بعد'}
+
+## الخواص والسمات الدلالية الموصى بها في أنظمة RAG
+- ${proposalDesc}`}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Honor Board / CONTRIBUTORS.md system */}
+                    <div className="bg-[#11141e] border border-gray-800/80 p-5 rounded-2xl space-y-4">
+                      <div className="flex items-center justify-between border-b border-gray-850 pb-2">
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                          <Users className="w-4 h-4 text-amber-400" />
+                          <span>لوحة شرف مجتمع المطورين وعاملي المعرفة (CONTRIBUTORS.md)</span>
+                        </h4>
+                        <span className="text-[10px] font-mono font-bold text-gray-500">لوحة الشرف المستقلة</span>
+                      </div>
+                      <p className="text-xs text-gray-400 leading-relaxed">
+                        لوحة الشرف هي مساحة لتكريم وتقدير المساهمين المخلصين لبروتوكول هندسة المعرفة وعاملي الذكاء الاصطناعي الأقوياء. كل مساهمة، تدقيق، أو مراجعة ترفع من كفاءة الاسترجاع دلالياً للجميع.
+                      </p>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+                        <div className="bg-[#141824] border border-gray-850 p-3.5 rounded-xl flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-emerald-950 text-emerald-400 flex items-center justify-center font-bold text-xs border border-emerald-850/50">رس</div>
+                          <div className="space-y-0.5 truncate">
+                            <p className="text-xs font-bold text-white truncate">م. رامي الشريف</p>
+                            <span className="text-[10px] text-gray-500 block">42 مساهمة (مطور رئيسي)</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-[#141824] border border-gray-850 p-3.5 rounded-xl flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-indigo-950 text-indigo-400 flex items-center justify-center font-bold text-xs border border-indigo-850/50">سح</div>
+                          <div className="space-y-0.5 truncate">
+                            <p className="text-xs font-bold text-white truncate">أ. سارة الحربي</p>
+                            <span className="text-[10px] text-gray-500 block">28 مساهمة (سياقات الألعاب)</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-[#141824] border border-gray-850 p-3.5 rounded-xl flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-xs border border-amber-850/50">أي</div>
+                          <div className="space-y-0.5 truncate">
+                            <p className="text-xs font-bold text-white truncate">أحمد يونس</p>
+                            <span className="text-[10px] text-gray-500 block">19 مساهمة (الأدوات والثابتة)</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-[#141824] border border-gray-850 p-3.5 rounded-xl flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-purple-950 text-purple-450 flex items-center justify-center font-bold text-xs border border-purple-850/50">لع</div>
+                          <div className="space-y-0.5 truncate">
+                            <p className="text-xs font-bold text-white truncate">د. ليلى عبد الرزاق</p>
+                            <span className="text-[10px] text-gray-500 block">15 مساهمة (البيانات العلمية)</span>
+                          </div>
                         </div>
                       </div>
                     </div>
