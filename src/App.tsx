@@ -676,9 +676,9 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold font-sans tracking-tight text-white">مدقق الملفات الذكي</h1>
-                <span className="text-xs px-2.5 py-0.5 rounded-full font-mono bg-indigo-950 text-indigo-400 border border-indigo-800">إصدار 1.0</span>
+                <span className="text-xs px-2.5 py-0.5 rounded-full font-mono bg-teal-950 text-teal-400 border border-teal-800 animate-pulse">إصدار 2.0</span>
               </div>
-              <p className="text-xs text-gray-400 mt-1">المنصة الموحدة لفحص المعرفة والتحقق من سلامة وصياغة ملفات أنظمة RAG والوكلاء</p>
+              <p className="text-xs text-gray-400 mt-1">المنصة الموحدة للفحص المعرفي وتقييم التضمين والتكامل مع Google Workspace للوكلاء وأنظمة RAG</p>
             </div>
           </div>
 
