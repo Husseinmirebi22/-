@@ -8,11 +8,26 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import fs from 'fs';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// Load File Extensions Reference Database (v1.1)
+let extDatabase: any = null;
+try {
+  const dbPath = path.join(process.cwd(), 'src', 'file_extensions_reference_db_v1.1.json');
+  if (fs.existsSync(dbPath)) {
+    extDatabase = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    console.log(`Successfully loaded extensions reference database with ${extDatabase?.metadata?.total_extensions} extensions.`);
+  } else {
+    console.warn(`Database file not found at ${dbPath}`);
+  }
+} catch (err) {
+  console.error('Failed to load file extensions reference database:', err);
+}
 
 // Allow parsing larger payloads (for big documents or ZIP files)
 app.use(express.json({ limit: '50mb' }));
@@ -75,18 +90,81 @@ function runProgrammaticAudit(fileName: string, content: string, size: number) {
     };
   }
 
-  // 1.2.1 File Formats
-  const isDocTypeOk = ['md', 'json', 'jsonl', 'txt'].includes(fileExt);
-  if (!isDocTypeOk) {
+  // 1.2.1 File Formats using Reference Database
+  let foundGroup: any = null;
+  if (extDatabase && extDatabase.groups) {
+    foundGroup = extDatabase.groups.find((g: any) => 
+      g.extensions.includes(fileExt)
+    );
+  }
+
+  if (foundGroup) {
+    const isNativeRAGType = ['md', 'json', 'jsonl', 'txt'].includes(fileExt);
+    if (isNativeRAGType) {
+      statusObject["1.2.1"] = {
+        status: 'PASS',
+        reasoning: `تم التعرف تلقائياً على صيغة الملف (${fileExt.toUpperCase()}) كجزء من مجموعة [${foundGroup.name}] (${foundGroup.name_en}). هذه الصيغة مدعومة بالكامل وموصى بها مباشرة في أنظمة الـ RAG والأنظمة الذكية.`,
+        recommendation: "صيغة الملف ممتازة وصالحة للتضمين اللغوي الفوري."
+      };
+    } else {
+      // Document group but non-native
+      if (foundGroup.id === 1) { // Text and Documents
+        const isSpreadsheet = ['xls', 'xlsx', 'ods', 'numbers'].includes(fileExt);
+        statusObject["1.2.1"] = {
+          status: 'PARTIAL',
+          reasoning: `تم التعرف على الملف كوثيقة مكتبية (${fileExt.toUpperCase()}) من مجموعة [${foundGroup.name}]. المستند يحمل محتوى معرفياً قيماً ولكنه غير مهيأ آلياً بصيغته الحالية للتقطيع والترميز مباشرة دون فك ترميز معقد.`,
+          recommendation: isSpreadsheet 
+            ? "يفضل تصدير البيانات الجدولية إلى صيغة JSON لحفظ العلاقات المنظمة، أو تحويل السطور لفقرات مرقمة تصف الأرقام دلالياً."
+            : `قم بتحويل محتوى الملف من (${fileExt.toUpperCase()}) إلى صيغة Markdown (.md) أو نص عادي (.txt) لتبسيط المعالجة وتعظيم دقة التضمين دلالياً.`
+        };
+      } 
+      // Image group
+      else if (foundGroup.id === 2) {
+        statusObject["1.2.1"] = {
+          status: 'FAIL',
+          reasoning: `الملف المرفوع هو صورة (${fileExt.toUpperCase()}) تابعة لمجموعة [${foundGroup.name}]. صور البكسلات لا يمكن فهمها وتضمينها دلالياً مباشرة في أجهزة الاسترجاع دون تحويل للبيانات.`,
+          recommendation: "استخدم معالج قارئ بصري (OCR) أو نموذج رؤية حاسوبية (Generative Vision Model) لاستخلاص المادة النصية وحفظها في صيغة Markdown، مع استغلال الأوصاف البديلة للحقائق المصورة."
+        };
+      }
+      // Videos & Audio
+      else if (foundGroup.id === 3 || foundGroup.id === 4) {
+        statusObject["1.2.1"] = {
+          status: 'FAIL',
+          reasoning: `تم التعرف على الملف كملف وسائط مسموعة/مرئية (${fileExt.toUpperCase()}) من مجموعة [${foundGroup.name}]. هذه القوالب تتطلب مفرغات لغوية لتحويل الحوار الصوتي لكلمات سردية صالحة للتقطيع والتضمين.`,
+          recommendation: "قم بتفريغ المقطع صوتياً (Audio Transcription) عبر تقنيات مثل Whisper، ثم قم بتنظيم المستند الناتج بصيغة Markdown ورفعه للتدقيق."
+        };
+      }
+      // Programming
+      else if (foundGroup.id === 5) {
+        statusObject["1.2.1"] = {
+          status: 'PARTIAL',
+          reasoning: `الملف المعطى كود برمجي (${fileExt.toUpperCase()}) يثبت تبعيته لمجموعة [${foundGroup.name}]. الأكواد البرمجية حساسة لتقسيم الأسطر العشوائي مما يهدد بفساد منطق الدوال والتعليقات.`,
+          recommendation: "يُنصح بتقطيع الملف تقنياً بالاعتماد على خوارزميات تقطيع الكود (AST / Code Chunkers) لتقطيع الدوال ككتل كاملة دون بترها، وإثراء الكود بتعليقات توضيحية غنية."
+        };
+      }
+      // Databases
+      else if (foundGroup.id === 6) {
+        statusObject["1.2.1"] = {
+          status: 'PARTIAL',
+          reasoning: `الملف المرفوع يمثل قاعدة بيانات أو صيغة مهيكلة للبيانات (${fileExt.toUpperCase()}) من مجموعة [${foundGroup.name}]. البيانات المنظمة لها طبيعة مستودعية تسبب تشتت متجهات المعنى والروابط إذا فُككت بشكل سردي عشوائي.`,
+          recommendation: "قم بتحويل محتويات قاعدة البيانات إلى مصفوفات JSON منظمة أو أسطر JSONL محددة لضمان بقاء العلاقات والصلات الدلالية بين البيانات بوضوح."
+        };
+      }
+      // All other groups (configuration, design, secure, apple, etc.)
+      else {
+        statusObject["1.2.1"] = {
+          status: 'FAIL',
+          reasoning: `امتداد الملف (${fileExt.toUpperCase()}) يندرج تحت مجموعة [${foundGroup.name}] (${foundGroup.name_en}). هذا النوع من الهياكل ليس مادة معرفية سردية تدعم طبيعة وبحث التضمين الدلالي في نظم RAG.`,
+          recommendation: "يرجى مراجعة محتوى الملف، وإذا كنت تود الاستعانة بحقائق داخله، انقل تلك المعارف إلى ملف Markdown مهيكل ومصنف بوضوح."
+        };
+      }
+    }
+  } else {
+    // Unknown extension
     statusObject["1.2.1"] = {
       status: 'FAIL',
-      reasoning: "الملف يحتوي على صيغة غير مدعومة في نظام RAG المعرفي مباشرة.",
-      recommendation: "قم بتحويل محتوى الملف إلى صيغة Markdown (.md) للمستندات السردية أو JSON للمصفوفات المنظمة."
-    };
-  } else {
-    statusObject["1.2.1"] = {
-      status: 'PASS',
-      reasoning: `صيغة الملف (${fileExt.toUpperCase()}) مطابقة وموصى بها في البروتوكول.`
+      reasoning: `الملف يحتوي على امتداد غريب أو غير مدعوم (.${fileExt}) لم يتم كشفه في قاعدة بيانات الامتدادات المرجعية الشاملة (987 امتداداً).`,
+      recommendation: "لتجنب مشاكل المعالجة والترميز، غير صيغة الملف إلى Markdown (.md) للمستندات السردية أو JSON للمصفوفات المنظمة."
     };
   }
 
@@ -482,7 +560,9 @@ function runProgrammaticAudit(fileName: string, content: string, size: number) {
 
   return {
     statusObject,
-    topFixes
+    topFixes,
+    fileGroup: foundGroup ? foundGroup.name : 'امتداد غير مصنف',
+    fileGroupEn: foundGroup ? foundGroup.name_en : 'Unclassified extension'
   };
 }
 
@@ -763,6 +843,8 @@ overlap_ratio: 0.1
     fileName,
     fileSize: size,
     fileType: fileExt as any,
+    fileGroup: progResults.fileGroup,
+    fileGroupEn: progResults.fileGroupEn,
     complianceScore,
     date: new Date().toISOString().split('T')[0],
     summary: {

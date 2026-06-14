@@ -998,10 +998,18 @@ security_level: داخلي
                       <div>
                         <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400 font-mono">درجة الامتثال الكلية محسوبة</span>
                         <h2 className="text-lg font-black text-white mt-1">تقرير فحص الملف: {activeFile.name}</h2>
-                        <div className="flex items-center gap-2 mt-2">
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
                           <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getRankBadgeInfo(activeFile.report.complianceScore).color}`}>
                             {getRankBadgeInfo(activeFile.report.complianceScore).text}
                           </span>
+                          {activeFile.report.fileGroup && (
+                            <span 
+                              title={`المصنف المرجعي: ${activeFile.report.fileGroupEn || ""}`}
+                              className="px-3 py-1 rounded-full text-xs font-bold border border-indigo-500/20 bg-indigo-500/10 text-indigo-300"
+                            >
+                              📂 {activeFile.report.fileGroup}
+                            </span>
+                          )}
                           <span className="text-xs text-gray-400 font-mono">{(activeFile.size / 1024).toFixed(1)} ك.ب</span>
                         </div>
                       </div>
@@ -1200,6 +1208,96 @@ security_level: داخلي
                         </div>
                       )}
                     </div>
+
+                    {/* Trend Chart (أداء ومستوى تتبع الامتثال للملف النشط) */}
+                    {(() => {
+                      const fileHistory = [...history]
+                        .filter((h) => h.fileName === activeFile.name)
+                        .reverse(); // oldest first
+
+                      return (
+                        <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-teal-400" />
+                              <span>منحنى تحسن جودة ومستوى الامتثال عبر المحاولات (Trend Chart)</span>
+                            </h3>
+                            <span className="text-[10px] text-gray-500 font-bold">رصد التقدم التراكمي للملف</span>
+                          </div>
+
+                          {fileHistory.length === 0 ? (
+                            <div className="p-6 text-center rounded-xl bg-[#0d0f17] border border-gray-850 text-gray-500 text-xs">
+                              لا تتوفر قراءات سابقة لتطور الامتثال لهذا الملف حتى الآن. سيتم رسم المنحنى تلقائياً هنا بمجرد إجراء تعديلات وإعادة التدقيق.
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              <div className="h-48 w-full bg-[#0d0f17] border border-gray-850 rounded-xl p-3">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <LineChart data={fileHistory} margin={{ top: 10, right: 15, bottom: 5, left: -25 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" vertical={false} />
+                                    <XAxis 
+                                      dataKey="date" 
+                                      stroke="#718096" 
+                                      fontSize={9} 
+                                      tickMargin={5} 
+                                    />
+                                    <YAxis 
+                                      stroke="#718096" 
+                                      fontSize={9} 
+                                      domain={[0, 100]} 
+                                      tickFormatter={(val) => `${val}%`} 
+                                    />
+                                    <Tooltip
+                                      content={({ active, payload }) => {
+                                        if (active && payload && payload.length) {
+                                          const data = payload[0].payload as AuditHistoryEntry;
+                                          return (
+                                            <div className="bg-[#11141e] border border-gray-800 p-3 rounded-lg text-xs leading-relaxed space-y-1 text-right shadow-xl">
+                                              <p className="text-[10px] text-teal-400 font-mono font-bold">{data.date}</p>
+                                              <p className="text-white font-bold">درجة الامتثال: <span className="text-teal-400">{data.complianceScore}%</span></p>
+                                              <p className="text-[10px] text-gray-400">
+                                                ✅ {data.passedCount} | ❌ {data.failedCount} | ⚠️ {data.partialCount}
+                                              </p>
+                                            </div>
+                                          );
+                                        }
+                                        return null;
+                                      }}
+                                    />
+                                    <Line 
+                                      type="monotone" 
+                                      dataKey="complianceScore" 
+                                      name="درجة الامتثال" 
+                                      stroke="#14b8a6" 
+                                      strokeWidth={2.5} 
+                                      dot={{ r: 4, fill: '#14b8a6', strokeWidth: 0 }} 
+                                      activeDot={{ r: 6, stroke: '#11141e', strokeWidth: 2 }} 
+                                    />
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px] text-gray-450">
+                                <div className="bg-[#141824] p-2.5 rounded-xl border border-gray-800 text-center">
+                                  <span>🚀 المحاولة الأولى: <strong className="text-white font-bold">{fileHistory[0].complianceScore}%</strong></span>
+                                </div>
+                                <div className="bg-[#141824] p-2.5 rounded-xl border border-gray-800 text-center">
+                                  <span>📈 التدقيق الأخير: <strong className="text-teal-400 font-bold">{fileHistory[fileHistory.length - 1].complianceScore}%</strong></span>
+                                </div>
+                                <div className="bg-[#141824] p-2.5 rounded-xl border border-gray-800 text-center flex items-center justify-center gap-1.5 active:scale-95 transition">
+                                  <span className="text-teal-400 font-bold">
+                                    {fileHistory.length > 1 ? (
+                                      `معدل التقدم الكلي: +${fileHistory[fileHistory.length - 1].complianceScore - fileHistory[0].complianceScore}%`
+                                    ) : (
+                                      'المحاولة الأولى النشطة'
+                                    )}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Simple mandatory template summary according to additional instructions */}
                     <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 space-y-4">

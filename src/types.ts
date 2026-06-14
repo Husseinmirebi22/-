@@ -31,6 +31,8 @@ export interface AuditReport {
   fileName: string;
   fileSize: number;
   fileType: FileType;
+  fileGroup?: string;
+  fileGroupEn?: string;
   complianceScore: number;
   date: string;
   summary: {

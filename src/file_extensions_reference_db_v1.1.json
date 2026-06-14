@@ -1,0 +1,277 @@
+{
+  "metadata": {
+    "version": "1.1",
+    "last_updated": "2026-06-13",
+    "description": "قاعدة بيانات مرجعية شاملة لامتدادات الملفات - نسخة محدثة ومُثراة. تحتوي على 22 مجموعة و987 امتداداً. صالحة للاستخدام في أنظمة RAG والنماذج اللغوية.",
+    "total_extensions": 987,
+    "original_count": 678,
+    "added_count": 309
+  },
+  "groups": [
+    {
+      "id": 1,
+      "name": "ملفات النصوص والوثائق",
+      "name_en": "Text and Documents",
+      "extensions": [
+        "abw", "asciidoc", "azw3", "bib", "bst", "csv", "doc", "docm", "docx", "dot",
+        "dotm", "dotx", "dvi", "epub", "key", "latex", "log", "ltx", "md", "mdx",
+        "mmd", "mobi", "numbers", "odf", "odp", "ods", "odt", "pages", "pdf", "pdfa",
+        "pdfe", "pptx", "psv", "rst", "rtf", "sxw", "tex", "tsv", "txt", "wpd",
+        "wps", "wri", "xls", "xlsm"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "ملفات الصور",
+      "name_en": "Images",
+      "extensions": [
+        "3fr", "ai", "apng", "arw", "avif", "bmp", "cdr", "cr2", "cur", "dcm",
+        "dib", "dng", "emf", "exr", "fits", "flif", "gif", "gpr", "hdr", "heic",
+        "heif", "ico", "j2k", "jfif", "jp2", "jpeg", "jpg", "jpx", "jxr", "kra",
+        "mrw", "nef", "orf", "pef", "png", "psb", "psd", "qoi", "raf", "rw2",
+        "srw", "svg", "svgz", "tga", "tiff", "wbmp", "webp", "wmf", "xcf"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "ملفات الفيديو",
+      "name_en": "Videos",
+      "extensions": [
+        "3g2", "3gp", "amv", "asf", "av1", "avi", "avs", "bik", "divx", "dv",
+        "f4v", "flv", "h264", "hevc", "ifo", "m2ts", "m2v", "m4v", "mjpeg", "mk3d",
+        "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "mxf", "ogv", "rmvb", "ts",
+        "vob", "vpy", "webm", "wmv", "xvid", "y4m"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "ملفات الصوت",
+      "name_en": "Audio",
+      "extensions": [
+        "aa", "aac", "aax", "ac3", "adx", "aif", "aiff", "alac", "amr", "ape",
+        "au", "brstm", "caf", "cda", "dff", "dsd", "dsf", "dts", "flac", "it",
+        "m4a", "m4b", "mid", "midi", "mka", "mod", "mp1", "mp2", "mp3", "mpa",
+        "mpc", "oga", "ogg", "oma", "opus", "ra", "rm", "s3m", "snd", "spx",
+        "tak", "tta", "w64", "wav", "weba", "wma", "wv", "xm"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "ملفات البرمجة",
+      "name_en": "Programming",
+      "extensions": [
+        "ada", "adb", "ads", "agda", "asm", "bash", "bat", "c", "cc", "cl",
+        "clj", "cljc", "cljs", "cmd", "cob", "cbl", "coffee", "cpp", "cr", "cs",
+        "cu", "cxx", "d", "dart", "dockerfile", "elm", "erl", "ex", "exs", "f",
+        "f90", "f95", "fish", "forth", "fs", "fsi", "fsx", "fth", "glsl", "go",
+        "groovy", "h", "hlsl", "hpp", "hs", "hx", "hxx", "idr", "ipynb", "java",
+        "jl", "js", "kt", "kts", "lsp", "lua", "m", "makefile", "mk", "ml",
+        "mli", "mll", "mly", "mm", "nim", "p", "pas", "php", "pl", "pm", "pp",
+        "pro", "prolog", "ps1", "psd1", "psm1", "purs", "py", "qml", "r", "raku",
+        "rakumod", "rb", "re", "rei", "rkt", "rmd", "rs", "s", "sc", "scala",
+        "sh", "sml", "sol", "sv", "swift", "tcl", "ts", "tsx", "v", "vala",
+        "vapi", "vb", "vhd", "vhdl", "wls", "zig", "zsh"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "ملفات قواعد البيانات",
+      "name_en": "Databases",
+      "extensions": [
+        "accdb", "avro", "csv", "db", "db2", "db3", "dbf", "dbs", "dsn", "dump",
+        "fdb", "feather", "fmp12", "fp7", "frm", "gdb", "h5", "hdf5", "ibd", "json",
+        "jsonl", "ldf", "mdb", "mdf", "myd", "myi", "ndf", "nt", "n3", "nq",
+        "odb", "ora", "orc", "parquet", "pickle", "rdf", "sql", "sqlite", "toml", "ttl",
+        "trig", "wal", "xlsb", "xlsx", "xml", "yaml"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "ملفات الضغط والأرشيف",
+      "name_en": "Compressed and Archive",
+      "extensions": [
+        "7z", "7z.001", "7z.002", "arj", "br", "bz2", "cab", "cdi", "cpio", "dmg",
+        "esd", "gz", "gzip", "img", "iso", "lha", "lzh", "lz", "lz4", "lzma",
+        "lzo", "mdf", "mds", "nrg", "rar", "shar", "sit", "sitx", "tar", "tar.gz",
+        "tbz", "tbz2", "toast", "txz", "tz", "uue", "wim", "xz", "z", "zip",
+        "zipx", "zpaq", "zst", "zstd", "tzst"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "ملفات الإعداد والتكوين",
+      "name_en": "Configuration",
+      "extensions": [
+        "appxmanifest", "bowerrc", "cfg", "cnf", "conf", "desktop", "dockercompose.yml", "drone.yml",
+        "editorconfig", "env", "eslintrc", "gitattributes", "gitconfig", "gitignore", "helmignore",
+        "hocon", "htaccess", "htpasswd", "ini", "json", "json5", "kubeconfig", "lock", "npmignore",
+        "npmrc", "plist", "prettierrc", "properties", "reg", "repo", "service", "socket",
+        "stylelintrc", "target", "tf", "tfstate", "tfvars", "timer", "toml", "traefik.yml",
+        "xml", "yaml", "yang", "yml"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "ملفات البرمجيات والأدوات",
+      "name_en": "Software and Tools",
+      "extensions": [
+        "a", "apk", "app", "appimage", "appx", "appxbundle", "asar", "ax", "bat", "bundle",
+        "class", "com", "cpl", "crx", "deb", "dll", "drv", "dylib", "ear", "efi",
+        "egg", "elf", "exe", "flatpak", "ipa", "jar", "ko", "lib", "msc", "msi",
+        "msix", "msp", "mst", "nexe", "node", "nupkg", "ocx", "pif", "pkg", "ps1",
+        "pyd", "rpm", "run", "scr", "sh", "snap", "so", "sys", "vbs", "vbx",
+        "vhd", "war", "wasm", "whl", "wsf", "xap", "xpi"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "ملفات الإنترنت والشبكات",
+      "name_en": "Internet and Networks",
+      "extensions": [
+        "ashx", "asmx", "asp", "aspx", "ascx", "ass", "atom", "br", "cert", "cfm",
+        "crl", "crt", "cshtml", "cjs", "css", "der", "do", "graphql", "har", "htc",
+        "htm", "html", "jsp", "jsonld", "js", "jsx", "key", "kml", "kmz", "less",
+        "m3u", "m3u8", "master", "mjs", "p12", "pac", "pak", "pem", "pfx", "pls",
+        "rss", "sass", "scss", "shtml", "srt", "styl", "sub", "svc", "swf", "torrent",
+        "tsx", "url", "vbhtml", "vtt", "wasm", "wat", "webmanifest", "webloc", "wsdl", "xhtml"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "ملفات التصميم والرسوميات",
+      "name_en": "Design and Graphics",
+      "extensions": [
+        "3ds", "3mf", "aep", "aet", "afdesign", "afphoto", "afpub", "afp", "ai", "amf",
+        "asm", "blend", "c4d", "catpart", "catproduct", "cdr", "drw", "dwg", "dxf", "e57",
+        "eps", "fbx", "fig", "fla", "g", "gcode", "glb", "gltf", "graffle", "iam",
+        "icml", "idml", "idw", "ifc", "iges", "igs", "indd", "indt", "ipn", "ipt",
+        "jt", "max", "neu", "obj", "ply", "prproj", "prt", "ps", "rfa", "rvt",
+        "sat", "shp", "shx", "sketch", "skp", "sldasm", "slddrw", "sldprt", "step", "stl",
+        "stp", "usd", "usda", "usdc", "usdz", "vsd", "vsdx", "vdx", "wrl", "x_b",
+        "x_t", "xd", "x3d", "x3g"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "ملفات الذكاء الاصطناعي والتعلّم الآلي",
+      "name_en": "AI and Machine Learning",
+      "extensions": [
+        "bin", "caffemodel", "ckpt", "cpkt", "engine", "fasttext", "ggml", "gguf", "h5", "hdf5",
+        "index", "joblib", "keras", "lmdb", "lstm", "mar", "mlmodel", "ncnn", "npz", "npy",
+        "onnx", "onnx_data", "ort", "param", "parquet", "pb", "pbtxt", "pkl", "pickle", "pmml",
+        "prototxt", "pt", "pth", "ptl", "rnn", "safetensors", "tflite", "tfrecord", "trt", "ubj",
+        "uff", "voc", "weights", "xml", "yaml"
+      ]
+    },
+    {
+      "id": 13,
+      "name": "ملفات الحاويات والمحاكاة الافتراضية",
+      "name_en": "Containers and Virtualization",
+      "extensions": [
+        "box", "cloudinit", "container", "containerfile", "dockerfile", "dockerignore", "ign",
+        "kube", "oci", "ovf", "ova", "qcow", "qcow2", "qed", "raw", "tar", "tgz",
+        "vagrantfile", "vdi", "vhd", "vhdx", "vmdk", "vmem", "vmsn", "vmss", "vmx",
+        "vmxf", "yml"
+      ]
+    },
+    {
+      "id": 14,
+      "name": "ملفات الأمن والتشفير والهندسة العكسية",
+      "name_en": "Security, Cryptography and Reverse Engineering",
+      "extensions": [
+        "asc", "bn", "cap", "cer", "core", "crl", "crt", "csr", "dat", "der",
+        "dmp", "dsa", "ec", "enc", "gdb", "gdbt", "gpg", "hprof", "i64", "id0",
+        "id1", "idb", "jks", "kdbx", "key", "luac", "lua", "map", "md5", "mem",
+        "minidump", "nam", "p12", "p8", "pcap", "pcapng", "pdb", "pem", "pfx", "ppk",
+        "pub", "rsa", "sam", "sfv", "sha1", "sha256", "sha3", "sha512", "sig", "til",
+        "vol", "bitwarden_json"
+      ]
+    },
+    {
+      "id": 15,
+      "name": "ملفات البريد الإلكتروني والتخاطب",
+      "name_en": "Email and Messaging",
+      "extensions": [
+        "chat", "csv", "dbx", "eml", "emlx", "ical", "ics", "json", "ldif", "mbox",
+        "mbx", "msg", "msf", "olk", "ost", "pst", "tab", "txt", "vcf", "vcs",
+        "vmsg", "zip"
+      ]
+    },
+    {
+      "id": 16,
+      "name": "ملفات الترجمة والتوطين",
+      "name_en": "Translation and Localization",
+      "extensions": [
+        "aff", "arb", "dic", "ftl", "gxt", "json", "lng", "mo", "po", "pot",
+        "properties", "qm", "resw", "resx", "strings", "tbx", "tmx", "ts", "xlf", "xlif",
+        "xliff", "xml"
+      ]
+    },
+    {
+      "id": 17,
+      "name": "ملفات الألعاب ومحركات الألعاب",
+      "name_en": "Game and Game Engines",
+      "extensions": [
+        "asset", "big", "bin", "bnk", "bsp", "cfg", "cry", "cs", "dat", "dds",
+        "dlc", "esm", "esp", "fnt", "forge", "fsb", "gd", "gma", "gmx", "json",
+        "lua", "mat", "mdl", "mdx", "meta", "mod", "nif", "ogg", "otf", "pak",
+        "py", "save", "sav", "scn", "smd", "sol", "tga", "tscn", "ttf", "uasset",
+        "umap", "unity", "unity3d", "vmf", "vpk", "vtf", "wad", "xml", "yaml"
+      ]
+    },
+    {
+      "id": 18,
+      "name": "ملفات الطباعة والنشر المكتبي",
+      "name_en": "Printing and Desktop Publishing",
+      "extensions": [
+        "afp", "cxf", "eps", "fm", "idml", "indd", "inx", "jdf", "mif", "oxps",
+        "pcl", "pdf", "ppd", "prn", "ps", "pub", "qpt", "qxp", "scs", "sla",
+        "xps", "zpl"
+      ]
+    },
+    {
+      "id": 19,
+      "name": "ملفات الأجهزة والبرامج الثابتة",
+      "name_en": "Hardware and Firmware",
+      "extensions": [
+        "axf", "bin", "bit", "blob", "dfu", "dts", "dtsi", "elf", "firmware", "fw",
+        "hex", "ihx", "img", "jed", "qsf", "rom", "s19", "s28", "s37", "srec",
+        "sv", "svf", "uf2", "v", "vhd", "xdc"
+      ]
+    },
+    {
+      "id": 20,
+      "name": "ملفات الرسوم البيانية العلمية والبيانات الهندسية",
+      "name_en": "Scientific Graphics and Engineering Data",
+      "extensions": [
+        "asc", "cdf", "cif", "csv", "dat", "dem", "dot", "fits", "grib", "grib2",
+        "hdf", "jdx", "mat", "mol", "mol2", "nc", "nii", "obj", "pdb", "ply",
+        "raw", "sdf", "spc", "stl", "tif", "tsv", "urdf", "vtk", "vtp", "vtu",
+        "xyz"
+      ]
+    },
+    {
+      "id": 21,
+      "name": "ملفات Apple (iOS/macOS)",
+      "name_en": "Apple Files (iOS/macOS)",
+      "extensions": [
+        "app", "appex", "assetcatalog", "assets", "bridgingheader", "clr", "dae", "dmg", "dsym",
+        "entitlements", "icns", "intentdefinition", "ipa", "key", "kext", "mobileprovision",
+        "mo", "mobi", "nib", "numbers", "pages", "pkg", "pkpass", "playground", "plist",
+        "prefPane", "saver", "scn", "sks", "storyboard", "swift", "terminal", "workspace",
+        "xcconfig", "xcassets", "xcdatamodeld", "xcodeproj", "xcscheme", "xctest", "xctestrun",
+        "xib"
+      ]
+    },
+    {
+      "id": 22,
+      "name": "ملفات متفرقة",
+      "name_en": "Miscellaneous",
+      "extensions": [
+        "afm", "ani", "bak", "crdownload", "dfont", "ds_store", "eot", "ink", "lnk", "old",
+        "otf", "part", "pfb", "pfm", "shortcut", "theme", "themepack", "tmp", "torrent", "ttf",
+        "webbookmark", "woff", "woff2"
+      ]
+    }
+  ]
+}
