@@ -866,6 +866,33 @@ overlap_ratio: 0.1
   res.json(report);
 });
 
+// Endpoint to fetch content from an external public URL
+app.post('/api/fetch-url', async (req, res) => {
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  try {
+    const fetchResponse = await fetch(url);
+    if (!fetchResponse.ok) {
+      return res.status(fetchResponse.status).json({ error: `Failed to fetch URL: ${fetchResponse.statusText}` });
+    }
+
+    const content = await fetchResponse.text();
+    let fileName = url.split('/').pop() || 'imported_file.md';
+    if (!fileName.includes('.')) fileName += '.md';
+    
+    res.json({
+      fileName,
+      content
+    });
+  } catch (error: any) {
+    console.error('Error fetching URL:', error);
+    res.status(500).json({ error: 'Failed to fetch the URL content' });
+  }
+});
+
 // Serve frontend assets in production and Vite middleware in dev
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

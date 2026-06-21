@@ -8,7 +8,7 @@ import {
   FileText, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, 
   ChevronDown, ChevronUp, Copy, Download, RefreshCw, Layers, Shield, 
   Database, Activity, Users, FileCode, Check, Eye, Trash2, ArrowLeftRight,
-  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks
+  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks, Link
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { CHECKLIST_CHAPTERS, DEFAULT_CHECKLIST_ITEMS } from './checklistData';
@@ -48,6 +48,9 @@ export default function App() {
   const [pastedFileType, setPastedFileType] = useState<'md' | 'json' | 'jsonl' | 'txt'>('md');
   const [pastedContent, setPastedContent] = useState('');
   const [isPasting, setIsPasting] = useState(false);
+  const [isUrlImportOpen, setIsUrlImportOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [urlImportLoading, setUrlImportLoading] = useState(false);
   
   // Toast notifications state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warn' | 'error' } | null>(null);
@@ -151,6 +154,46 @@ export default function App() {
   const filteredFiles = files.filter(file => 
     file.name.toLowerCase().includes(sidebarSearch.toLowerCase())
   );
+
+  const handleUrlImport = async () => {
+    if (!importUrl) return;
+    try {
+      setUrlImportLoading(true);
+      const res = await fetch('/api/fetch-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: importUrl })
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "فشل جلب الملف من الرابط");
+      }
+      
+      const { fileName, content } = await res.json();
+      
+      const newFile: FileToAudit = {
+        id: Math.random().toString(36).substring(7),
+        name: fileName,
+        content,
+        size: content.length,
+        type: fileName.endsWith('.json') ? 'json' : fileName.endsWith('.jsonl') ? 'jsonl' : fileName.endsWith('.txt') ? 'txt' : 'md'
+      };
+
+      setFiles(prev => [...prev, newFile]);
+      setSelectedFileId(newFile.id);
+      showToast('تم استيراد الملف من الرابط بنجاح!');
+      triggerAuditForFile(newFile.id, newFile.content, newFile.name, newFile.size);
+      
+      setImportUrl('');
+      setIsUrlImportOpen(false);
+    } catch (err: any) {
+      showToast(err.message || 'حدث خطأ أثناء جلب الملف من الرابط.', 'error');
+      console.error(err);
+    } finally {
+      setUrlImportLoading(false);
+    }
+  };
 
   // Handle single or multiple file selection
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -810,10 +853,19 @@ export default function App() {
               {/* Paste Text manually block toggler */}
               <button 
                 onClick={() => setIsPasting(!isPasting)}
-                className="w-full py-2.5 px-4 mb-4 rounded-xl border border-gray-800 bg-[#161a29] text-xs font-bold text-gray-300 hover:bg-[#1a2033] hover:text-white transition flex items-center justify-center gap-2"
+                className="w-full py-2.5 px-4 mb-2 rounded-xl border border-gray-800 bg-[#161a29] text-xs font-bold text-gray-300 hover:bg-[#1a2033] hover:text-white transition flex items-center justify-center gap-2"
               >
                 <FileCode className="w-4 h-4" />
                 <span>إدراج نص يدوي</span>
+              </button>
+
+              {/* URL Import block toggler */}
+              <button 
+                onClick={() => setIsUrlImportOpen(!isUrlImportOpen)}
+                className="w-full py-2.5 px-4 mb-4 rounded-xl border border-gray-800 bg-[#161a29] text-xs font-bold text-gray-300 hover:bg-[#1a2033] hover:text-white transition flex items-center justify-center gap-2"
+              >
+                <Link className="w-4 h-4" />
+                <span>استيراد من رابط (URL)</span>
               </button>
 
               {/* Workspace Import (Only shows if authenticated) */}
@@ -864,6 +916,32 @@ export default function App() {
                   <div className="flex gap-2">
                     <button onClick={handlePasteSubmit} className="flex-1 py-1.5 bg-teal-500 hover:bg-teal-600 text-white font-bold text-xs rounded-lg transition">استيراد وفحص</button>
                     <button onClick={() => setIsPasting(false)} className="px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 text-xs rounded-lg transition">إلغاء</button>
+                  </div>
+                </div>
+              )}
+
+              {/* URL Import Form Dialog */}
+              {isUrlImportOpen && (
+                <div className="bg-[#141824] border border-gray-800 p-4 rounded-xl mb-4 space-y-3 relative">
+                  <div>
+                    <label className="block text-[11px] text-gray-400 mb-1">الرابط المباشر (URL):</label>
+                    <input 
+                      type="url" 
+                      placeholder="https://example.com/file.md"
+                      value={importUrl} 
+                      onChange={(e) => setImportUrl(e.target.value)}
+                      className="w-full bg-[#1c2234] border border-gray-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-teal-500 outline-none" 
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleUrlImport} 
+                      disabled={urlImportLoading || !importUrl}
+                      className="flex-1 py-1.5 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition"
+                    >
+                      {urlImportLoading ? 'جاري الاستيراد...' : 'استيراد وفحص'}
+                    </button>
+                    <button onClick={() => setIsUrlImportOpen(false)} className="px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 text-xs rounded-lg transition">إلغاء</button>
                   </div>
                 </div>
               )}
