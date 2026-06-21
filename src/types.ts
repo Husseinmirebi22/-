@@ -16,6 +16,7 @@ export interface AuditItem {
   successCriteria: string;
   example?: string;
   status: AuditStatus;
+  category?: string;
   reasoning?: string;
   recommendation?: string;
   lineNumbers?: number[];
@@ -25,6 +26,7 @@ export interface ChecklistChapter {
   id: number;
   title: string;
   description: string;
+  categories?: string[];
 }
 
 export interface AuditReport {

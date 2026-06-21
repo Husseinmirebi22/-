@@ -9,6 +9,8 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import cron from 'node-cron';
+import { google } from 'googleapis';
 
 dotenv.config();
 
@@ -890,6 +892,106 @@ app.post('/api/fetch-url', async (req, res) => {
   } catch (error: any) {
     console.error('Error fetching URL:', error);
     res.status(500).json({ error: 'Failed to fetch the URL content' });
+  }
+});
+
+const scheduledJobs: Record<string, any> = {};
+
+app.post('/api/compliance/schedule-report', async (req, res) => {
+  const { accessToken, emailTo, subject, reportContent, scheduleString, jobId } = req.body;
+  if (!accessToken || !emailTo || !subject || !reportContent || !scheduleString || !jobId) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  if (scheduledJobs[jobId]) {
+    scheduledJobs[jobId].stop();
+  }
+
+  try {
+    const task = cron.schedule(scheduleString, async () => {
+      try {
+        console.log(`Executing scheduled report to ${emailTo}`);
+        const oAuth2Client = new google.auth.OAuth2();
+        oAuth2Client.setCredentials({ access_token: accessToken });
+        const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+
+        const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString('base64')}?=`;
+        const messageParts = [
+          `To: ${emailTo}`,
+          'Content-Type: text/html; charset=utf-8',
+          'MIME-Version: 1.0',
+          `Subject: ${utf8Subject}`,
+          '',
+          reportContent,
+        ];
+        const message = messageParts.join('\\r\\n');
+        
+        const encodedMessage = Buffer.from(message)
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+          
+        await gmail.users.messages.send({
+          userId: 'me',
+          requestBody: {
+            raw: encodedMessage,
+          },
+        });
+        console.log('Scheduled report email sent successfully.');
+      } catch (err: any) {
+        console.error('Error in scheduled task:', err.message);
+      }
+    });
+
+    scheduledJobs[jobId] = task;
+    res.json({ success: true, message: 'Report scheduled successfully' });
+  } catch (error: any) {
+    console.error('Failed to schedule report:', error);
+    res.status(500).json({ error: 'Failed to schedule report: ' + error.message });
+  }
+});
+
+app.post('/api/compliance/send-report', async (req, res) => {
+  const { accessToken, emailTo, subject, reportContent } = req.body;
+  
+  if (!accessToken || !emailTo || !subject || !reportContent) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const oAuth2Client = new google.auth.OAuth2();
+    oAuth2Client.setCredentials({ access_token: accessToken });
+    const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+
+    const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString('base64')}?=`;
+    const messageParts = [
+      `To: ${emailTo}`,
+      'Content-Type: text/html; charset=utf-8',
+      'MIME-Version: 1.0',
+      `Subject: ${utf8Subject}`,
+      '',
+      reportContent,
+    ];
+    const message = messageParts.join('\\r\\n');
+    
+    const encodedMessage = Buffer.from(message)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+      
+    await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage,
+      },
+    });
+
+    res.json({ success: true, message: 'Report sent successfully' });
+  } catch (error: any) {
+    console.error('Failed to send report:', error);
+    res.status(500).json({ error: 'Failed to send report: ' + error.message });
   }
 });
 

@@ -8,7 +8,7 @@ import {
   FileText, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, 
   ChevronDown, ChevronUp, Copy, Download, RefreshCw, Layers, Shield, 
   Database, Activity, Users, FileCode, Check, Eye, Trash2, ArrowLeftRight,
-  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks, Link
+  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks, Link, Sun, Moon
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { CHECKLIST_CHAPTERS, DEFAULT_CHECKLIST_ITEMS } from './checklistData';
@@ -44,6 +44,7 @@ export default function App() {
   // UI helpers
   const [expandedChapter, setExpandedChapter] = useState<number | null>(1);
   const [editorViewMode, setEditorViewMode] = useState<'original' | 'fixed' | 'diff'>('diff');
+  const [editorTheme, setEditorTheme] = useState<'dark' | 'light'>('dark');
   const [pastedFileName, setPastedFileName] = useState('MR-POL-101_سياسة-العينة_v1.0.md');
   const [pastedFileType, setPastedFileType] = useState<'md' | 'json' | 'jsonl' | 'txt'>('md');
   const [pastedContent, setPastedContent] = useState('');
@@ -69,6 +70,10 @@ export default function App() {
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
   const [pendingExportAction, setPendingExportAction] = useState<{action: () => void, name: string} | null>(null);
   const [activeReviewStage, setActiveReviewStage] = useState<number>(1);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [scheduleEmail, setScheduleEmail] = useState('');
+  const [scheduleCron, setScheduleCron] = useState('0 9 * * *');
+  const [isScheduling, setIsScheduling] = useState(false);
 
   const toggleCompareSelect = (id: string) => {
     setSelectedCompareIds(prev => {
@@ -145,6 +150,46 @@ export default function App() {
   const showToast = (message: string, type: 'success' | 'warn' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const submitScheduleReport = async () => {
+    if (!scheduleEmail || !authToken) {
+      showToast('الرجاء التأكد من البريد الإلكتروني وتسجيل الدخول', 'error');
+      return;
+    }
+    setIsScheduling(true);
+    try {
+      const reportMarkdown = history.map(h => 
+        `تقرير ${h.fileName} (${h.date})\\nدرجة الامتثال: ${h.complianceScore}%\\nنجاح: ${h.passedCount} | فشل: ${h.failedCount}\\n---`
+      ).join('\\n\\n') || 'لا توجد بيانات امتثال حالية.';
+      
+      const payload = {
+        accessToken: authToken,
+        emailTo: scheduleEmail,
+        subject: 'تقرير الامتثال الدوري - Smart File Auditor',
+        reportContent: `<h3>مرحباً! هذا تقرير الامتثال الدوري لملفات فريقك:</h3><pre>${reportMarkdown}</pre>`,
+        scheduleString: scheduleCron,
+        jobId: 'team-compliance-report'
+      };
+
+      const res = await fetch('/api/compliance/schedule-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "فشل جدولة التقرير");
+      }
+      showToast('تمت جدولة إرسال التقرير الدوري بنجاح!');
+      setIsScheduleModalOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message, 'error');
+    } finally {
+      setIsScheduling(false);
+    }
   };
 
   // Helper to trigger active file
@@ -2132,8 +2177,19 @@ security_level: داخلي
                         </button>
                       </div>
 
-                      {/* Exporters */}
                       <div className="flex gap-2">
+                        {/* Theme Toggle */}
+                        <div className="bg-[#181d2c] border border-gray-800 p-1 rounded-xl flex items-center mr-auto">
+                          <button
+                            onClick={() => setEditorTheme(t => t === 'dark' ? 'light' : 'dark')}
+                            className="px-2.5 py-1.5 rounded-lg font-semibold transition text-gray-400 hover:text-white"
+                            title={editorTheme === 'dark' ? 'الوضع الفاتح' : 'الوضع الداكن'}
+                          >
+                            {editorTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                          </button>
+                        </div>
+
+                        {/* Exporters */}
                         {editorViewMode === 'fixed' && (
                           <button 
                             onClick={applyCleanFixToFile}
@@ -2178,12 +2234,12 @@ security_level: داخلي
 
                     {/* View Panels */}
                     {editorViewMode === 'original' && (
-                      <div className="bg-[#0b0c14] border border-gray-850 rounded-2xl overflow-hidden font-mono text-[11px] leading-relaxed relative">
-                        <div className="absolute top-3 right-3 bg-gray-900 border border-gray-800 text-gray-400 px-3 py-1 text-[10px] rounded font-bold uppercase select-none">
+                      <div className={`rounded-2xl overflow-hidden font-mono text-[11px] leading-relaxed relative transition-colors ${editorTheme === 'dark' ? 'bg-[#0b0c14] border border-gray-850' : 'bg-[#f8f9fa] border border-gray-200 shadow-sm'}`}>
+                        <div className={`absolute top-3 right-3 px-3 py-1 text-[10px] rounded font-bold uppercase select-none transition-colors border ${editorTheme === 'dark' ? 'bg-gray-900 border-gray-800 text-gray-400' : 'bg-gray-200 border-gray-300 text-gray-600'}`}>
                           مستند خام
                         </div>
-                        <div className="overflow-auto max-h-[500px] p-5 text-gray-300">
-                          <pre className="text-left" dir="ltr">
+                        <div className={`overflow-auto max-h-[500px] p-5 transition-colors ${editorTheme === 'dark' ? 'text-gray-300' : 'text-gray-800'}`}>
+                          <pre className="text-left whitespace-pre-wrap" dir="ltr">
                             {activeFile.content}
                           </pre>
                         </div>
@@ -2191,13 +2247,13 @@ security_level: داخلي
                     )}
 
                     {editorViewMode === 'fixed' && (
-                      <div className="bg-[#0b0c14] border border-emerald-950 rounded-2xl overflow-hidden font-mono text-[11px] leading-relaxed relative">
-                        <div className="absolute top-3 right-3 bg-green-950 border border-green-800 text-green-400 px-3 py-1 text-[10px] rounded font-bold uppercase select-none flex items-center gap-1">
+                      <div className={`rounded-2xl overflow-hidden font-mono text-[11px] leading-relaxed relative transition-colors ${editorTheme === 'dark' ? 'bg-[#0b0c14] border border-emerald-950' : 'bg-[#f8f9fa] border border-emerald-200 shadow-sm'}`}>
+                        <div className={`absolute top-3 right-3 px-3 py-1 text-[10px] rounded font-bold uppercase select-none flex items-center gap-1 transition-colors border ${editorTheme === 'dark' ? 'bg-green-950 border-green-800 text-green-400' : 'bg-emerald-100 border-emerald-300 text-emerald-700'}`}>
                           <Check className="w-3 h-3" />
                           <span>تطهير ومعالجة آلية</span>
                         </div>
-                        <div className="overflow-auto max-h-[500px] p-5 text-gray-300">
-                          <pre className="text-left" dir="ltr">
+                        <div className={`overflow-auto max-h-[500px] p-5 transition-colors ${editorTheme === 'dark' ? 'text-gray-300' : 'text-gray-800'}`}>
+                          <pre className="text-left whitespace-pre-wrap" dir="ltr">
                             {activeFile.report.cleanedContent}
                           </pre>
                         </div>
@@ -2207,19 +2263,19 @@ security_level: داخلي
                     {editorViewMode === 'diff' && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
-                          <span className="text-[10px] text-gray-500 font-bold block">المستند الأصلي المرفوع (يحوي أخطاء تركيبية ولغوية)</span>
-                          <div className="bg-[#0b0c14] border border-rose-950 rounded-2xl overflow-hidden font-mono text-[11.5px] leading-relaxed max-h-[400px] overflow-y-auto p-4 text-gray-400">
-                            <pre className="text-left" dir="ltr">{activeFile.content}</pre>
+                          <span className={`text-[10px] font-bold block transition-colors ${editorTheme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>المستند الأصلي المرفوع (يحوي أخطاء تركيبية ولغوية)</span>
+                          <div className={`rounded-2xl overflow-hidden font-mono text-[11.5px] leading-relaxed max-h-[400px] overflow-y-auto p-4 transition-colors ${editorTheme === 'dark' ? 'bg-[#0b0c14] border border-rose-950 text-gray-400' : 'bg-[#fff5f5] border border-rose-200 text-gray-700 shadow-sm'}`}>
+                            <pre className="text-left whitespace-pre-wrap" dir="ltr">{activeFile.content}</pre>
                           </div>
                         </div>
 
                         <div className="space-y-1.5">
-                          <span className="text-[10px] text-teal-400 font-bold block flex items-center gap-1">
+                          <span className={`text-[10px] font-bold block flex items-center gap-1 transition-colors ${editorTheme === 'dark' ? 'text-teal-400' : 'text-emerald-700'}`}>
                             <Check className="w-3.5 h-3.5" />
                             <span>المستند المصحح (تطهير الأرقام والرموز وضخ YAML وسجل الإصدارات)</span>
                           </span>
-                          <div className="bg-[#090a0f] border border-emerald-950 rounded-2xl overflow-hidden font-mono text-[11.5px] leading-relaxed max-h-[400px] overflow-y-auto p-4 text-emerald-300/90">
-                            <pre className="text-left" dir="ltr">{activeFile.report.cleanedContent}</pre>
+                          <div className={`rounded-2xl overflow-hidden font-mono text-[11.5px] leading-relaxed max-h-[400px] overflow-y-auto p-4 transition-colors ${editorTheme === 'dark' ? 'bg-[#090a0f] border border-emerald-950 text-emerald-300/90' : 'bg-[#f0fdf4] border border-emerald-200 text-emerald-800 shadow-sm'}`}>
+                            <pre className="text-left whitespace-pre-wrap" dir="ltr">{activeFile.report.cleanedContent}</pre>
                           </div>
                         </div>
                       </div>
@@ -2375,6 +2431,13 @@ security_level: داخلي
                         </h3>
                         {history.length > 0 && (
                           <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => setIsScheduleModalOpen(true)}
+                              className="text-xs px-3 py-1.5 rounded-lg border bg-[#1c2234] border-gray-700 text-emerald-400 hover:bg-[#252d43] flex items-center gap-2 transition"
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                              جدولة التقرير (Gmail)
+                            </button>
                             <button
                               onClick={() => {
                                 setCompareMode(!compareMode);
@@ -2941,6 +3004,81 @@ security_level: داخلي
                 className="bg-rose-950/40 hover:bg-rose-900 border border-rose-900 text-rose-300 text-xs font-bold py-3 px-4 rounded-xl transition"
               >
                 تخطي وتأكيد التسريب
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Modal */}
+      {isScheduleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#0b0e14] border border-gray-800 rounded-2xl w-full max-w-md shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-gray-800 flex items-center justify-between bg-[#11141e]">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <Mail className="w-4 h-4 text-emerald-400" />
+                جدولة تقرير الامتثال الدوري
+              </h3>
+              <button 
+                onClick={() => setIsScheduleModalOpen(false)}
+                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-gray-800 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-400 leading-relaxed">
+                قم بجدولة إرسال تقرير حالة الامتثال لقاعدة المعرفة والضوابط بشكل دوري إلى فريق العمل عبر خدمة Gmail.
+              </p>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs text-gray-300 font-bold">البريد الإلكتروني للفريق</label>
+                <input
+                  type="email"
+                  value={scheduleEmail}
+                  onChange={e => setScheduleEmail(e.target.value)}
+                  placeholder="team@example.com"
+                  className="w-full bg-[#141824] border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs text-gray-300 font-bold">معدل التكرار (Cron Expression)</label>
+                <select
+                  value={scheduleCron}
+                  onChange={e => setScheduleCron(e.target.value)}
+                  className="w-full bg-[#141824] border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
+                >
+                  <option value="0 9 * * 1">أسبوعياً (كل اثنين 9 ص)</option>
+                  <option value="0 9 1 * *">شهرياً (أول يوم في الشهر 9 ص)</option>
+                  <option value="*/2 * * * *">كل دقيقتين (للتجربة المباشرة)</option>
+                </select>
+              </div>
+
+              {needsAuth && (
+                <div className="bg-rose-950/30 border border-rose-900/50 p-3 rounded-xl mt-4 flex flex-col gap-2">
+                  <p className="text-[10px] text-rose-400">تحتاج إلى تسجيل الدخول بصلاحية Gmail أولاً</p>
+                  <button onClick={handleGoogleLogin} className="text-xs w-full py-2 bg-indigo-600 rounded text-white font-bold text-center">
+                    تسجيل الدخول (Google Workspace)
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t border-gray-800 bg-[#11141e] flex justify-end gap-3">
+              <button
+                onClick={() => setIsScheduleModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold text-gray-400 hover:text-white bg-transparent rounded-xl transition"
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={submitScheduleReport}
+                disabled={!scheduleEmail || isScheduling || needsAuth}
+                className="px-5 py-2 text-xs font-bold text-[#0b0e14] bg-emerald-400 hover:bg-emerald-300 rounded-xl transition shadow-[0_0_15px_rgba(52,211,153,0.3)] disabled:opacity-50 flex items-center gap-2"
+              >
+                {isScheduling ? 'جاري الجدولة...' : 'تأكيد الجدولة (Gmail)'}
               </button>
             </div>
           </div>
