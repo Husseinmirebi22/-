@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "userProfile": {
+      "title": "UserProfile",
+      "description": "User profile with display name and preferences",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "auditHistoryEntry": {
+      "title": "AuditHistoryEntry",
+      "description": "A single entry of an audit report saved by the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "date": { "type": "string" },
+        "complianceScore": { "type": "number" },
+        "passedCount": { "type": "number" },
+        "failedCount": { "type": "number" },
+        "partialCount": { "type": "number" },
+        "fullReport": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "fileName", "date", "complianceScore"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "userProfile",
+      "description": "User profile database"
+    },
+    "/users/{userId}/history/{historyId}": {
+      "schema": "auditHistoryEntry",
+      "description": "Audit reports history subcollection"
+    }
+  }
+}

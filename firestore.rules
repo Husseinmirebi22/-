@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net (Strictly Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global reusable security helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation schemas
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email'])
+          && data.keys().size() <= 8
+          && data.uid is string && data.uid.size() <= 128
+          && data.email is string && data.email.size() <= 128;
+    }
+
+    function isValidAuditHistoryEntry(data) {
+      return data.keys().hasAll(['id', 'userId', 'fileName', 'date', 'complianceScore'])
+          && data.keys().size() <= 12
+          && data.id is string && data.id.size() <= 128
+          && data.userId is string && data.userId.size() <= 128
+          && data.fileName is string && data.fileName.size() <= 256
+          && data.date is string && data.date.size() <= 64
+          && data.complianceScore is number
+          && data.passedCount is number
+          && data.failedCount is number
+          && data.partialCount is number;
+    }
+
+    // User Resource Definitions
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidUserProfile(incoming());
+
+      // Nested history of audit reports
+      match /history/{historyId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) 
+                      && isValidId(historyId) 
+                      && isValidAuditHistoryEntry(incoming()) 
+                      && incoming().userId == userId;
+                      
+        allow update: if isOwner(userId) 
+                      && isValidId(historyId) 
+                      && isValidAuditHistoryEntry(incoming()) 
+                      && incoming().userId == userId 
+                      && incoming().id == existing().id;
+                      
+        allow delete: if isOwner(userId) && isValidId(historyId);
+      }
+    }
+  }
+}

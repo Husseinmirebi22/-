@@ -65,6 +65,19 @@ export interface FileToAudit {
   report?: AuditReport;
   loading?: boolean;
   error?: string;
+  linguisticReport?: {
+    overallLinguisticScore: number;
+    qualityEvaluation: string;
+    errors: {
+      original: string;
+      fixed: string;
+      type: 'grammar' | 'spelling' | 'punctuation' | 'style';
+      explanation: string;
+    }[];
+    suggestedCorrection: string;
+  };
+  linguisticLoading?: boolean;
+  linguisticReportApplied?: boolean;
 }
 
 export interface AuditHistoryEntry {

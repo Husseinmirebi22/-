@@ -9,17 +9,84 @@ import {
   ChevronDown, ChevronUp, Copy, Download, RefreshCw, Layers, Shield, 
   Database, Activity, Users, FileCode, Check, Eye, Trash2, ArrowLeftRight,
   Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks, Link, Sun, Moon,
-  AlertTriangle, ShieldCheck, Fingerprint, TerminalSquare
+  AlertTriangle, ShieldCheck, Fingerprint, TerminalSquare, Cloud
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { CHECKLIST_CHAPTERS, DEFAULT_CHECKLIST_ITEMS } from './checklistData';
 import { AuditItem, ChecklistChapter, AuditReport, FileToAudit, AuditHistoryEntry } from './types';
-import { initAuth, googleSignIn, logout, getAccessToken } from './lib/firebase';
+import { initAuth, googleSignIn, logout, getAccessToken, syncUserProfile, saveHistoryToFirestore, deleteHistoryFromFirestore, loadHistoryFromFirestore } from './lib/firebase';
 import WorkspaceImport from './components/WorkspaceImport';
 import CompareView from './components/CompareView';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { EntityD3Graph } from './components/EntityD3Graph';
+import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import extDatabase from './file_extensions_reference_db_v2.1.json';
 import enrichedDatabase from './extensions_enriched_v2.1.json';
+
+const scanForSensitivePatterns = (content: string) => {
+  if (!content) return [];
+  
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const phoneRegex = /(\+?966|05)\d{8}/g;
+  const ipRegex = /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g;
+  const credentialRegex = /(password|secret|apikey|api_key|token|key|private_key|كلمة مرور|سري للغاية|سر)/gi;
+  const saudiIdRegex = /\b[12]\d{9}\b/g;
+  const generalIdRegex = /\b\d{10,14}\b/g;
+
+  const emailsCount = (content.match(emailRegex) || []).length;
+  const phonesCount = (content.match(phoneRegex) || []).length;
+  const ipsCount = (content.match(ipRegex) || []).length;
+  const credentialsCount = (content.match(credentialRegex) || []).length;
+  
+  const saudiIdsCount = (content.match(saudiIdRegex) || []).length;
+  const generalIdsCount = (content.match(generalIdRegex) || []).length - saudiIdsCount;
+  const adjustedIdsCount = saudiIdsCount + Math.max(0, generalIdsCount);
+
+  return [
+    { name: 'عناوين بريد (Email)', count: emailsCount, color: '#f43f5e' },
+    { name: 'أرقام هواتف (Phone)', count: phonesCount, color: '#fb7185' },
+    { name: 'عناوين شبكة (IP)', count: ipsCount, color: '#3b82f6' },
+    { name: 'مفاتيح سرية وقيمة', count: credentialsCount, color: '#f59e0b' },
+    { name: 'أرقام هويات شخصية', count: adjustedIdsCount, color: '#10b981' }
+  ];
+};
+
+const handleRagQuerySimulation = (query: string, content: string) => {
+  if (!query || !content) return [];
+  
+  const rawParagraphs = content.split(/\n+/).map(p => p.trim()).filter(p => p.length > 20);
+  
+  const cleanTerm = (text: any) => {
+    const rawText = typeof text === 'string' ? text : String(text || '');
+    return rawText.toLowerCase()
+      .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()؟?]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+  };
+  
+  const queryWords = cleanTerm(query);
+  if (queryWords.length === 0) return [];
+
+  const results = rawParagraphs.map((paragraph, index) => {
+    const paraWords = cleanTerm(paragraph);
+    const matchingWords = queryWords.filter(w => paraWords.some(pw => pw.includes(w) || w.includes(pw)));
+    const uniqueMatches = Array.from(new Set(matchingWords));
+    
+    const overlapRatio = uniqueMatches.length / Math.sqrt(queryWords.length * Math.min(10, paraWords.length) || 1);
+    const score = Math.min(0.98, Math.max(0.05, overlapRatio * 1.25));
+    
+    return {
+      index: index + 1,
+      text: paragraph,
+      score: Math.round(score * 100),
+      size: paragraph.length,
+      wordCount: paraWords.length
+    };
+  });
+
+  return results
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+};
 
 export default function App() {
   // Main State
@@ -28,6 +95,15 @@ export default function App() {
   const [files, setFiles] = useState<FileToAudit[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [history, setHistory] = useState<AuditHistoryEntry[]>([]);
+  
+  // Advanced Filter state v2.1
+  const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('');
+  
+  // RAG Simulation state
+  const [ragQuery, setRagQuery] = useState('');
+  const [ragSimulationResults, setRagSimulationResults] = useState<any[]>([]);
+  const [isSimulatingRag, setIsSimulatingRag] = useState(false);
   
   // Community Proposal Generator & Validator State
   const [proposalExt, setProposalExt] = useState('yaml');
@@ -138,6 +214,32 @@ export default function App() {
     }
   }, []);
 
+  // Hook to handle user syncing and history loading from Firestore upon authentication
+  useEffect(() => {
+    const syncWithFirestore = async () => {
+      if (authUser) {
+        try {
+          await syncUserProfile(authUser);
+          const dbHistory = await loadHistoryFromFirestore(authUser.uid);
+          if (dbHistory && dbHistory.length > 0) {
+            setHistory(dbHistory);
+            localStorage.setItem('smart_file_auditor_history', JSON.stringify(dbHistory));
+            showToast('تم تحميل ومزامنة سجل الفحوصات من السحاب ☁️', 'success');
+          } else if (history.length > 0) {
+            // First time login - upload existing local history to Firestore
+            for (const entry of history) {
+              await saveHistoryToFirestore(authUser.uid, entry);
+            }
+            showToast('تم حفظ سجل الفحوصات المحلي في السحاب ☁️', 'success');
+          }
+        } catch (error) {
+          console.error("error syncing to firestore:", error);
+        }
+      }
+    };
+    syncWithFirestore();
+  }, [authUser]);
+
   const handleGoogleLogin = async () => {
     setIsLoggingIn(true);
     try {
@@ -146,9 +248,7 @@ export default function App() {
         setAuthToken(result.accessToken);
         setAuthUser(result.user);
         setNeedsAuth(false);
-        showToast('تم تسجيل الدخول بنجاح مع Google Workspace', 'success');
-        
-        // Ensure user is synced with backend Cloud SQL db (Call an API if we exposed one, but for now we rely on the app starting up properly)
+        showToast('تم تسجيل الدخول بنجاح مع Google Workspace والمزامنة نشطة ☁️', 'success');
       }
     } catch (err: any) {
       console.error('Login failed:', err);
@@ -165,12 +265,34 @@ export default function App() {
     setAuthUser(null);
     setAuthToken(null);
     setNeedsAuth(true);
+    setHistory([]);
+    localStorage.removeItem('smart_file_auditor_history');
+    showToast('تم تسجيل الخروج وتفريغ الجلسة لحماية الخصوصية', 'success');
   };
 
-  // Save history to storage helper
-  const saveHistory = (newHistory: AuditHistoryEntry[]) => {
+  // Save history to storage and sync to Firestore
+  const saveHistory = async (newHistory: AuditHistoryEntry[]) => {
+    const oldHistory = [...history];
     setHistory(newHistory);
     localStorage.setItem('smart_file_auditor_history', JSON.stringify(newHistory));
+
+    if (authUser) {
+      try {
+        // Find added items inside newHistory
+        const added = newHistory.filter(newItem => !oldHistory.some(oldItem => oldItem.id === newItem.id));
+        for (const item of added) {
+          await saveHistoryToFirestore(authUser.uid, item);
+        }
+
+        // Find deleted items inside oldHistory
+        const deleted = oldHistory.filter(oldItem => !newHistory.some(newItem => newItem.id === oldItem.id));
+        for (const item of deleted) {
+          await deleteHistoryFromFirestore(authUser.uid, item.id);
+        }
+      } catch (error) {
+        console.error("Firestore history sync failure:", error);
+      }
+    }
   };
 
   const showToast = (message: string, type: 'success' | 'warn' | 'error' = 'success') => {
@@ -223,6 +345,40 @@ export default function App() {
 
   // Sidebar search filtering with autocomplete based on type, status, or group from enriched Database
   const filteredFiles = files.filter(file => {
+    // Apply Advanced Group Filter
+    if (selectedGroupFilter) {
+      const ext = file.name.substring(file.name.lastIndexOf('.') + 1).toLowerCase();
+      const enriched = enrichedDatabase?.extensions?.find((e: any) => e.extension === ext);
+      if (!enriched || enriched.group_name !== selectedGroupFilter) {
+        return false;
+      }
+    }
+
+    // Apply Advanced Category Filter
+    if (selectedCategoryFilter) {
+      const ext = file.name.substring(file.name.lastIndexOf('.') + 1).toLowerCase();
+      const enriched = enrichedDatabase?.extensions?.find((e: any) => e.extension === ext);
+      if (!enriched) return false;
+      
+      const group = (enriched.group_name || '').toLowerCase();
+      const type = (enriched.type || '').toLowerCase();
+      const notes = (enriched.notes || '').toLowerCase();
+      
+      if (selectedCategoryFilter === 'طبي') {
+        if (!group.includes('طبي') && !type.includes('medical') && !notes.includes('طبي') && !notes.includes('مرض') && !group.includes('البيانات الطبية والصحية')) {
+          return false;
+        }
+      } else if (selectedCategoryFilter === 'علمي') {
+        if (!group.includes('علمي') && !type.includes('scientific') && !type.includes('biology') && !notes.includes('علمي') && !group.includes('الرسوم البيانية العلمية')) {
+          return false;
+        }
+      } else if (selectedCategoryFilter === 'قانوني') {
+        if (!type.includes('document') && !notes.includes('قانوني') && !notes.includes('عقد') && !notes.includes('عقود') && !notes.includes('وثائق')) {
+          return false;
+        }
+      }
+    }
+
     const q = sidebarSearch.toLowerCase().trim();
     if (!q) return true;
 
@@ -320,6 +476,18 @@ export default function App() {
       s.value.toLowerCase().includes(typed) || 
       s.category.toLowerCase().includes(typed)
     ).slice(0, 6);
+  };
+
+  const runRagSimulation = (overrideQuery?: string) => {
+    const queryToUse = overrideQuery || ragQuery;
+    if (!queryToUse) return;
+    setIsSimulatingRag(true);
+    setTimeout(() => {
+      const results = handleRagQuerySimulation(queryToUse, activeFile?.content || "");
+      setRagSimulationResults(results);
+      setIsSimulatingRag(false);
+      showToast('تمت محاكاة استلام واسترجاع المحتوى بنجاح 🚀', 'success');
+    }, 600);
   };
 
   const handleUrlImport = async () => {
@@ -422,6 +590,63 @@ export default function App() {
       // Run automatic local audit immediately for user experience
       triggerAuditForFile(newFiles[0].id, newFiles[0].content, newFiles[0].name, newFiles[0].size);
     }
+  };
+
+  // Run isolated linguistic pre-check
+  const triggerLinguisticAudit = async (id: string) => {
+    const fileToAudit = files.find(f => f.id === id);
+    if (!fileToAudit) return;
+
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, linguisticLoading: true } : f));
+
+    try {
+      const response = await fetch('/api/linguistic-audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: fileToAudit.name,
+          content: fileToAudit.content
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'فشل الاتصال بخدمة التدقيق اللغوي.');
+      }
+
+      const reportData = await response.json();
+
+      setFiles(prev => prev.map(f => f.id === id ? { 
+        ...f, 
+        linguisticReport: reportData, 
+        linguisticLoading: false,
+        linguisticReportApplied: false
+      } : f));
+      
+      showToast('اكتمل فحص الجودة اللغوية الفوري للمستند بنجاح!');
+    } catch (err: any) {
+      console.error(err);
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, linguisticLoading: false } : f));
+      showToast(err.message || 'حدث خطأ أثناء فحص الجودة اللغوية.', 'error');
+    }
+  };
+
+  // Apply grammar corrections to the active file content
+  const applyLinguisticCorrections = (id: string) => {
+    const file = files.find(f => f.id === id);
+    if (!file || !file.linguisticReport) return;
+
+    const cleanContent = file.linguisticReport.suggestedCorrection;
+
+    // Update state
+    setFiles(prev => prev.map(f => f.id === id ? {
+      ...f,
+      content: cleanContent,
+      size: cleanContent.length,
+      linguisticReportApplied: true
+    } : f));
+
+    showToast('تمت صياغة المستند وتطبيق كافة التصحيحات اللغوية بنجاح! جاهز الآن لأحمال وطبقات الفحص الدلالي.');
   };
 
   // Run audit through Express backend (syntactic + Gemini semantic AI combined)
@@ -1063,11 +1288,15 @@ security_level: "عام"
                       <p className="text-[10px] text-gray-400 truncate">{authUser.email}</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400 mb-2">
+                  <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400">
                     <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Drive</span>
                     <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Docs</span>
                     <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Sheets</span>
                     <span className="flex items-center gap-1 bg-[#1a2033] px-2 py-1 rounded"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> Gmail</span>
+                  </div>
+                  <div className="text-[10px] bg-[#161a29]/80 text-[#2dd4bf] border border-[#2dd4bf]/20 px-3 py-1.5 rounded-xl flex items-center justify-center gap-1.5 font-semibold">
+                    <Cloud className="w-3.5 h-3.5 text-[#2dd4bf] animate-bounce" />
+                    <span>مزامنة Firestore نشطة وآمنة</span>
                   </div>
                   <button 
                     onClick={handleGoogleLogout} 
@@ -1252,6 +1481,56 @@ security_level: "عام"
                 </div>
               )}
 
+              {/* Advanced Filters under search input */}
+              {files.length > 0 && (
+                <div className="flex flex-col gap-2 mb-4 bg-[#141824]/90 border border-gray-800 p-3 rounded-xl">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-gray-400">
+                    <span className="flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>الفلترة المتقدمة (الدستور v2.1)</span>
+                    </span>
+                    {(selectedGroupFilter || selectedCategoryFilter) && (
+                      <button 
+                        onClick={() => { setSelectedGroupFilter(''); setSelectedCategoryFilter(''); }} 
+                        className="text-[#2dd4bf] hover:underline cursor-pointer font-bold"
+                      >
+                        إعادة تعيين
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <div>
+                      <label className="block text-[9px] text-gray-500 mb-1">مجموعة المستندات:</label>
+                      <select 
+                        value={selectedGroupFilter} 
+                        onChange={(e) => setSelectedGroupFilter(e.target.value)}
+                        className="w-full bg-[#0d1017] text-white border border-gray-800 rounded-lg px-1.5 py-1 text-[10px] outline-none focus:border-indigo-500"
+                      >
+                        <option value="">الكل (مجموعات)</option>
+                        <option value="ملفات النصوص والوثائق">الملفات النصية والوثائقية</option>
+                        <option value="ملفات الرسوم البيانية العلمية والبيانات الهندسية">البيانات العلمية والرسومية</option>
+                        <option value="ملفات البيانات الطبية والصحية">البيانات الطبية والصحية</option>
+                      </select>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-[9px] text-gray-500 mb-1">التصنيف المعرفي:</label>
+                      <select 
+                        value={selectedCategoryFilter} 
+                        onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+                        className="w-full bg-[#0d1017] text-white border border-gray-800 rounded-lg px-2 py-1 text-[10px] outline-none focus:border-indigo-500"
+                      >
+                        <option value="">الكل (تصنيفات)</option>
+                        <option value="علمي">علمي (Scientific)</option>
+                        <option value="طبي">طبي (Medical)</option>
+                        <option value="قانوني">قانوني (Legal / Doc)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* List of active files */}
               {files.length === 0 ? (
                 <div className="text-center py-8 text-gray-500 border border-gray-900 rounded-xl bg-[#0d0f17]">
@@ -1331,14 +1610,53 @@ security_level: "عام"
             
             {/* If no file is audited yet */}
             {!activeFile ? (
-              <div className="bg-[#11141e] border border-gray-800 rounded-3xl p-12 text-center shadow-lg">
-                <div className="w-20 h-20 bg-gradient-to-tr from-gray-800 to-gray-700/50 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                  <Database className="w-10 h-10 text-gray-400" />
+              <div className="bg-[#11141e] border border-gray-800 rounded-3xl p-8 md:p-12 text-center shadow-lg relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-80 h-80 bg-teal-500/5 rounded-full blur-3xl -z-10"></div>
+                <div className="absolute bottom-0 left-0 w-80 h-80 bg-indigo-550/5 rounded-full blur-3xl -z-10"></div>
+
+                <div className="w-16 h-16 bg-gradient-to-tr from-teal-500 to-indigo-650 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-md shadow-teal-500/10">
+                  <Database className="w-8 h-8 text-white animate-pulse" />
                 </div>
-                <h2 className="text-xl font-bold text-white mb-2">مرحباً بك في مستشار هندسة المعرفة الذكي</h2>
-                <p className="text-sm text-gray-400 max-w-lg mx-auto leading-relaxed mb-6">
-                  ارفع مستند سياسة أو ملف تدريب، أو الصق محتواه يدوياً. وسيتولى محرك التدقيق اختبار الملف آلياً ودلالياً وفقاً لأبواب البروتوكول الموحدة العشرة وحساب درجة الامتثال بدقة.
+                <h2 className="text-xl md:text-2xl font-black text-white mb-2 tracking-tight">مرحباً بك في مدقق الملفات والجاهزية المعرفية الذكي 2.0</h2>
+                <p className="text-sm text-gray-400 max-w-xl mx-auto leading-relaxed mb-8">
+                  منصتكم الموثوقة لفحص ومراجعة جودة التقطيع (Chunking) والخصوصية لملفات الذكاء الاصطناعي مع تكامل سريع مع خدمات Google Workspace.
                 </p>
+
+                {/* Visual Step-by-Step cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-right mb-10 max-w-5xl mx-auto">
+                  <div className="p-5 rounded-2xl bg-[#0e111a] border border-gray-850 hover:border-gray-800 transition">
+                    <div className="w-10 h-10 rounded-xl bg-orange-950/40 text-orange-400 flex items-center justify-center mb-4 border border-orange-900/40 font-bold font-sans">1</div>
+                    <h3 className="text-sm font-bold text-white mb-1.5 flex items-center gap-1.5">
+                      <span>📁</span>
+                      <span>رفع مستند المعرفة</span>
+                    </h3>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      اسحب وألقِ أي ملف نصي (Markdown، JSON، TXT)، أو الصقه في المحرر أو استورد بالرابط في ثوانٍ.
+                    </p>
+                  </div>
+                  
+                  <div className="p-5 rounded-2xl bg-[#0e111a] border border-gray-850 hover:border-gray-800 transition border-t-2 border-t-teal-700/50">
+                    <div className="w-10 h-10 rounded-xl bg-teal-950/40 text-teal-400 flex items-center justify-center mb-4 border border-teal-900/40 font-bold font-sans">2</div>
+                    <h3 className="text-sm font-bold text-white mb-1.5 flex items-center gap-1.5">
+                      <span>👁️</span>
+                      <span>الفحص التلقائي والدراسة</span>
+                    </h3>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      يتحقق محرك الفحص من ترميز UTF-8، التسميات، البيانات الشخصية والكيانات دلالياً بـ Google Gemini.
+                    </p>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-[#0e111a] border border-gray-850 hover:border-gray-800 transition">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-950/40 text-indigo-400 flex items-center justify-center mb-4 border border-indigo-900/40 font-bold font-sans">3</div>
+                    <h3 className="text-sm font-bold text-white mb-1.5 flex items-center gap-1.5">
+                      <span>📩</span>
+                      <span>تكامل وتطهير ومحاكاة</span>
+                    </h3>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      حاكي استرجاع RAG الفردي، وطالع الكيانات بصرياً وتكامل بلمسة مع Gmail و Keep ومهمات Tasks.
+                    </p>
+                  </div>
+                </div>
                 
                 <div className="flex flex-wrap items-center justify-center gap-4">
                   <button 
@@ -1359,14 +1677,15 @@ security_level: داخلي
 
 # سياسة السفر الداخلي 🚀
 
-هذه السياسة تحدد الإجراءات. 
+هذه السياسة تحدد الإجراءات المعتمدة لرحلات الموظفين محلياً بهدف التنظيم والشفافية.
 
 ## شروط السفر
-1. السفر بالدرجة الاقتصادية.  
-2. يجب أن نوافق قبل السفر بـ 15 يوماً.  
+1. السفر بالدرجة الاقتصادية لجميع الرحلات التي تقل مدتها عن 4 ساعات.  
+2. يجب طلب الموافقة المسبقة قبل السفر بـ 15 يوماً عبر نظام الموارد البشرية.  
 
 ## أسئلة متوقعة
-أشياء وأسئلة شائعة..`;
+س: هل تغطي الشركة رحلات نهاية الأسبوع الشخصية؟
+ج: لا، تغطي الشركة أيام العمل الرسمية والمهام الموثقة فقط.`;
                       const sampleFile: FileToAudit = {
                         id: 'sample',
                         name: 'HR-POL-102_Sample_v1.0.md',
@@ -1378,9 +1697,9 @@ security_level: داخلي
                       setSelectedFileId('sample');
                       triggerAuditForFile('sample', sampleContent, sampleFile.name, sampleContent.length);
                     }}
-                    className="px-5 py-3 rounded-xl bg-gradient-to-l from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white font-bold text-xs select-none shadow-md transition"
+                    className="px-6 py-3.5 rounded-xl bg-gradient-to-l from-teal-500 to-indigo-600 hover:opacity-90 hover:scale-[1.01] active:scale-95 text-white font-bold text-xs select-none shadow-lg transition-all shadow-indigo-500/10 cursor-pointer flex items-center gap-2"
                   >
-                    تجربة ملف عينة سريع
+                    🚀 تجربة ملف عينة تفاعلي وبدء المحاكاة وفوراً
                   </button>
                 </div>
               </div>
@@ -1482,70 +1801,113 @@ security_level: داخلي
 
                 {/* Navigation Tab Bar inside results */}
                 <div className="border-b border-gray-800 flex items-center justify-between">
-                  <div className="flex gap-4">
-                    <button 
-                      onClick={() => setActiveTab('overview')}
-                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
-                        activeTab === 'overview' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <Activity className="w-4 h-4" />
-                      <span>نظرة عامة</span>
-                    </button>
-                    <button 
-                      onClick={() => setActiveTab('chapters')}
-                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
-                        activeTab === 'chapters' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <Layers className="w-4 h-4" />
-                      <span>قسيمة الأبواب العشرة</span>
-                    </button>
-                    <button 
-                      onClick={() => setActiveTab('editor')}
-                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
-                        activeTab === 'editor' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <FileCode className="w-4 h-4" />
-                      <span>مقارنة المحتوى والـ Diff</span>
-                    </button>
-                    <button 
-                      onClick={() => setActiveTab('graph')}
-                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
-                        activeTab === 'graph' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <Database className="w-4 h-4" />
-                      <span>مستكشف الكيانات (Graph)</span>
-                    </button>
-                    <button 
-                      onClick={() => setActiveTab('history')}
-                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
-                        activeTab === 'history' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <History className="w-4 h-4" />
-                      <span>تسلسل التحديثات والـ KPI</span>
-                    </button>
-                    <button 
-                      onClick={() => setActiveTab('steps')}
-                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
-                        activeTab === 'steps' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <ListChecks className="w-4 h-4" />
-                      <span>خطوات المراجعة</span>
-                    </button>
-                    <button 
-                      onClick={() => setActiveTab('community')}
-                      className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none ${
-                        activeTab === 'community' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <Users className="w-4 h-4" />
-                      <span>مستودع المعرفة والدعم</span>
-                    </button>
+                  <div className="flex gap-4 overflow-x-auto select-none no-scrollbar">
+                    {mode === 'teacher' ? (
+                      <>
+                        <button 
+                          onClick={() => setActiveTab('overview')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'overview' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Activity className="w-4 h-4" />
+                          <span>📁 المقاييس والخصوصية</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('graph')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'graph' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Database className="w-4 h-4" />
+                          <span>🌐 بيئة RAG والـ Graph</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('chapters')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'chapters' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Layers className="w-4 h-4" />
+                          <span>✅ البنود والمستند الأساسي</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('editor')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'editor' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <FileCode className="w-4 h-4" />
+                          <span>🛠️ مقارنة وتعديل المحتوى</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button 
+                          onClick={() => setActiveTab('overview')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'overview' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Activity className="w-4 h-4" />
+                          <span>نظرة عامة</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('chapters')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'chapters' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Layers className="w-4 h-4" />
+                          <span>قسيمة الأبواب العشرة</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('editor')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'editor' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <FileCode className="w-4 h-4" />
+                          <span>مقارنة المحتوى والـ Diff</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('graph')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'graph' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Database className="w-4 h-4" />
+                          <span>مستكشف الكيانات (Graph)</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('history')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'history' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <History className="w-4 h-4" />
+                          <span>تسلسل التحديثات والـ KPI</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('steps')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'steps' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <ListChecks className="w-4 h-4" />
+                          <span>خطوات المراجعة</span>
+                        </button>
+                        <button 
+                          onClick={() => setActiveTab('community')}
+                          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition select-none flex-shrink-0 ${
+                            activeTab === 'community' ? 'border-teal-500 text-teal-400' : 'border-transparent text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          <Users className="w-4 h-4" />
+                          <span>مستودع المعرفة والدعم</span>
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   <div className="flex gap-2">
@@ -1684,6 +2046,163 @@ security_level: داخلي
                       );
                     })()}
 
+                    {/* Linguistic Precheck and Grammatical Audit (فحص الجودة الصياغية واللغوية وتصحيحها) */}
+                    <div id="linguistic-checker-card" className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl -z-10"></div>
+                      
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-800 pb-4 mb-4">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-indigo-400 font-mono tracking-wider">التحليل اللغوي وإصلاح الصياغة والنحو</span>
+                          <h3 className="text-sm font-bold text-white mt-0.5 flex items-center gap-1.5">
+                            <Sparkles className="w-4 h-4 text-indigo-400" />
+                            <span>مصحح الجودة اللغوية النحوية والتعبيرية</span>
+                          </h3>
+                        </div>
+                        <span className="text-[10px] text-gray-400 font-sans bg-[#0c0e16] px-2.5 py-1 rounded border border-gray-850">
+                          نظام فحص ذكي مسبق
+                        </span>
+                      </div>
+
+                      {!activeFile.linguisticReport ? (
+                        <div className="text-right py-4">
+                          <p className="text-xs text-gray-400 leading-relaxed mb-4">
+                            إجراء فحص لغوي فوري قبل التدقيق المعرفي الشامل للتأكد من خلوه من الأخطاء النحوية، الإملائية والهمزات، مع إمكانية تحديث الملف تلقائياً بالصيغة الفصحى المصححة.
+                          </p>
+                          <button
+                            id="btn-trigger-linguistic"
+                            onClick={() => triggerLinguisticAudit(activeFile.id)}
+                            disabled={activeFile.linguisticLoading}
+                            className={`w-full md:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-l from-indigo-500 to-teal-600 hover:from-indigo-600 hover:to-teal-700 text-white font-bold text-xs select-none shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                              activeFile.linguisticLoading ? 'opacity-50 cursor-not-allowed' : ''
+                            }`}
+                          >
+                            {activeFile.linguisticLoading ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                <span>جاري فحص النحو وتطهير الإملاء...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span>البدء بالفحص وإصلاح الجودة اللغوية 🔎</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {/* Score and General description */}
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center bg-[#141824] p-4 rounded-xl border border-gray-850">
+                            <div className="text-center md:border-l md:border-gray-800 pb-3 md:pb-0">
+                              <span className="text-[10px] text-gray-500 block font-bold mb-1">درجة الجودة اللغوية</span>
+                              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-950/40 border border-indigo-500/30 text-indigo-400 font-bold font-sans text-xl">
+                                {activeFile.linguisticReport.overallLinguisticScore}%
+                              </div>
+                            </div>
+                            <div className="col-span-3 text-right">
+                              <span className="text-[10px] text-teal-400 font-bold block mb-1">التقييم الوصفي للمستند:</span>
+                              <p className="text-xs text-gray-300 leading-relaxed">
+                                {activeFile.linguisticReport.qualityEvaluation}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Action to Apply corrected content */}
+                          <div className="p-4 rounded-xl bg-teal-950/20 border border-teal-900/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-right">
+                            <div>
+                              <h4 className="text-xs font-bold text-teal-400 flex items-center gap-1">
+                                <span>💡</span>
+                                <span>يتوفر مستند مطهر ومصحح بالكامل لغوياً</span>
+                              </h4>
+                              <p className="text-[11px] text-gray-400 mt-1">
+                                {activeFile.linguisticReportApplied 
+                                  ? "حالة: تم تطبيق كافة التعديلات اللغوية والهمزات بنجاح على محتوى الملف الحالي!"
+                                  : "يمكنك اعتماد كافة تصحيحات النحو والإملاء والصياغة المقترحة وإدراجها بلمسة في محرر الملف الحالي قبل متابعة التدقيق الدلالي."
+                                }
+                              </p>
+                            </div>
+                            {!activeFile.linguisticReportApplied ? (
+                              <button
+                                id="btn-apply-linguistic"
+                                onClick={() => applyLinguisticCorrections(activeFile.id)}
+                                className="px-4 py-2 bg-gradient-to-l from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-teal-900/30 transition-all flex-shrink-0 cursor-pointer"
+                              >
+                                ✔️ تطبيق التصحيح التلقائي الشامل
+                              </button>
+                            ) : (
+                              <span className="text-[11px] font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-900/50 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>تم تطبيق التطهير اللغوي</span>
+                              </span>
+                            )}
+                          </div>
+
+                          {/* List of Grammar and Spelling issues */}
+                          <div>
+                            <span className="text-[10px] text-gray-500 block font-bold mb-2">الأخطاء والملاحظات اللغوية المكتشفة ({activeFile.linguisticReport.errors?.length || 0})</span>
+                            {(!activeFile.linguisticReport.errors || activeFile.linguisticReport.errors.length === 0) ? (
+                              <p className="text-xs text-emerald-400 bg-emerald-950/20 border border-emerald-900/40 p-3 rounded-xl text-center">
+                                🎉 مستند لغوي ممتاز! لم يتم العثور على أخطاء إملائية أو نحوية واضحة.
+                              </p>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {activeFile.linguisticReport.errors.map((error, idx) => (
+                                  <div key={idx} className="bg-[#141824] border border-gray-850 p-3 rounded-xl relative overflow-hidden text-right text-xs">
+                                    <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-gray-800">
+                                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold font-sans ${
+                                        error.type === 'grammar' ? 'bg-indigo-950 text-indigo-400 border border-indigo-900/30' :
+                                        error.type === 'spelling' ? 'bg-amber-950 text-amber-400 border border-amber-900/30' :
+                                        error.type === 'punctuation' ? 'bg-cyan-950 text-cyan-400 border border-cyan-900/30' :
+                                        'bg-purple-950 text-purple-400 border border-purple-900/30'
+                                      }`}>
+                                        {
+                                          error.type === 'grammar' ? 'نحو وصرف' :
+                                          error.type === 'spelling' ? 'إملاء وهمزات' :
+                                          error.type === 'punctuation' ? 'علامات ترقيم' :
+                                          'صياغة وأسلوب'
+                                        }
+                                      </span>
+                                      <span className="text-[9px] text-gray-500 font-mono font-bold">#لغويات {idx + 1}</span>
+                                    </div>
+
+                                    {/* Compares */}
+                                    <div className="space-y-1.5 mt-1.5">
+                                      <div className="flex items-start gap-1">
+                                        <span className="text-rose-500 flex-shrink-0 font-bold font-sans">❌ قبل:</span>
+                                        <p className="text-gray-450 line-through bg-rose-950/10 px-1 rounded">{error.original}</p>
+                                      </div>
+                                      <div className="flex items-start gap-1">
+                                        <span className="text-emerald-500 flex-shrink-0 font-bold font-sans">✅ بعد:</span>
+                                        <p className="text-gray-200 bg-emerald-950/10 px-1 rounded font-semibold">{error.fixed}</p>
+                                      </div>
+                                    </div>
+
+                                    <div className="mt-2 text-[11px] text-gray-400 bg-[#0e111a] p-2 rounded border border-gray-850" style={{ wordBreak: 'break-word' }}>
+                                      <strong className="text-indigo-400 font-bold">💡 الشرح: </strong>
+                                      {error.explanation}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Re-audit advice */}
+                          <div className="flex justify-end pt-2">
+                            <button
+                              id="btn-re-audit-linguistic"
+                              onClick={() => triggerLinguisticAudit(activeFile.id)}
+                              disabled={activeFile.linguisticLoading}
+                              className="text-[11px] font-bold text-gray-400 hover:text-indigo-400 transition flex items-center gap-1 cursor-pointer bg-transparent border-0"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${activeFile.linguisticLoading ? 'animate-spin' : ''}`} />
+                              <span>إعادة فحص الجودة لغوياً</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Security and Protection Shield (إخفاء PII ومكافحة حقن الأوامر) */}
                     {(() => {
                       if (!activeFile.report) return null;
@@ -1740,6 +2259,70 @@ security_level: داخلي
                                 )}
                               </div>
                             ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Dynamic PII & Sensitive Keyword Pattern Dashboard (اللوحة الإحصائية لمؤشرات الخصوصية) */}
+                    {(() => {
+                      const chartData = scanForSensitivePatterns(activeFile.content || "");
+                      const totalFindings = chartData.reduce((acc, curr) => acc + curr.count, 0);
+                      
+                      return (
+                        <div className="bg-[#11141e] border border-gray-850 p-5 rounded-2xl space-y-4 text-right">
+                          <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-teal-400 font-mono tracking-wider">لوحة مؤشرات الخطر والخصوصية الإحصائية (PII Stats)</span>
+                              <h4 className="text-xs font-bold text-white flex items-center gap-1.5 mt-0.5">
+                                <Activity className="w-4 h-4 text-rose-400" />
+                                <span>الرسم البياني لتكرار الكلمات والمؤشرات الأمنية الحساسة</span>
+                              </h4>
+                            </div>
+                            <span className={`text-[10px] px-2.5 py-1 rounded-full border font-bold ${totalFindings > 0 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}`}>
+                              {totalFindings > 0 ? `تم رصد ${totalFindings} مؤشر خطر / PII` : 'المستند خالٍ تماماً من مؤشرات الخصوصية'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-center">
+                            {/* Recharts Bar/Line chart */}
+                            <div className="lg:col-span-2 h-[220px] bg-[#0c0e16] p-3 rounded-xl border border-gray-900">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartData} margin={{ top: 20, right: 35, left: -20, bottom: 5 }}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#161b2c" />
+                                  <XAxis dataKey="name" stroke="#6b7280" fontSize={8} tickLine={false} />
+                                  <YAxis stroke="#6b7280" fontSize={9} tickLine={false} allowDecimals={false} />
+                                  <Tooltip 
+                                    contentStyle={{ backgroundColor: '#11141e', borderColor: '#1f2937', color: '#fff', fontSize: '11px', textAlign: 'right' }} 
+                                    cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }} 
+                                  />
+                                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                                    {chartData.map((entry, index) => (
+                                      <Cell key={`cell-${index}`} fill={entry.color} />
+                                    ))}
+                                  </Bar>
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+
+                            {/* Legend & remediation guide */}
+                            <div className="space-y-3 bg-[#141824] p-4 rounded-xl border border-gray-850">
+                              <h5 className="text-[11px] font-bold text-gray-300">تفصيل الأنماط المكتشفة:</h5>
+                              <div className="space-y-2 text-[10px] text-gray-400">
+                                {chartData.map((d, i) => (
+                                  <div key={i} className="flex items-center justify-between">
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: d.color }} />
+                                      <span>{d.name}</span>
+                                    </span>
+                                    <strong className="text-white font-mono">{d.count}</strong>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="border-t border-gray-800 pt-2.5 text-[9px] text-[#2dd4bf] leading-relaxed">
+                                * يستند الكاشف الرقمي على تعبيرات قياسية صارمة ومرشحات أمنية تضمن خصوصية التجزئة وسلامة التضمينات للذكاء الاصطناعي.
+                              </div>
+                            </div>
                           </div>
                         </div>
                       );
@@ -2277,6 +2860,145 @@ security_level: داخلي
                         </div>
                       );
                     })()}
+
+                    {/* Hybrid RAG Retrieval Query Simulator Dashboard (مشبّه ومحاكي استئصال المعرفة) */}
+                    <div className="bg-[#11141e] border border-indigo-900/40 rounded-2xl p-5 space-y-4 text-right">
+                      <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-teal-400 font-mono tracking-wider">البيئة الافتراضية التجريبية (Retrieval Playground)</span>
+                          <h4 className="text-xs font-bold text-white flex items-center gap-1.5 mt-0.5">
+                            <Layers className="w-4 h-4 text-indigo-400" />
+                            <span>مشبّه استرداد RAG وتقييم جودة التقطيع (Chunking Quality Assess)</span>
+                          </h4>
+                        </div>
+                        <span className="text-[9px] font-mono text-gray-500 bg-gray-950 px-2.5 py-1 rounded border border-gray-850">
+                          Retrieval Index: Hybrid Jaccard Terms Overlap
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-gray-400 leading-relaxed">
+                        اكتب سؤالاً أو فكرة هنا لمحاكاة كيف سيقوم محرك RAG باسترجاع مقاطع من هذا الملف. ستعرض النتائج المقاطع المسترجعة بدقة، نسبة المطابقة المتوقعة، وتقرير جودة التقطيع (Chunking) ومستوى تركيز المعرفة.
+                      </p>
+
+                      {/* Overly simplified quick preset query tags */}
+                      <div className="flex flex-wrap gap-2 pt-1 pb-2">
+                        <span className="text-[10px] text-gray-400 font-bold self-center">💡 أسئلة سريعة:</span>
+                        {[
+                          "ما هو الموضوع الأساسي؟",
+                          "هل توجد تواريخ محدثة؟",
+                          "من هو مالك المستند والمسؤول؟",
+                          "ما هي شروط السفر والمستحقات؟"
+                        ].map((qText, index) => (
+                          <button
+                            key={index}
+                            onClick={() => {
+                              setRagQuery(qText);
+                              runRagSimulation(qText);
+                            }}
+                            className="bg-[#181d30] hover:bg-teal-650 hover:bg-teal-950/20 hover:text-teal-400 border border-indigo-900/50 hover:border-teal-800 text-gray-300 text-[10px] px-2.5 py-1 rounded-lg transition select-none flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>#{index + 1}</span>
+                            <span>{qText}</span>
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex gap-2.5">
+                        <input
+                          type="text"
+                          placeholder="مثال: من هو كاتب المستند؟ أو اكتب أي كلمة مفتاحية حيوية..."
+                          value={ragQuery}
+                          onChange={(e) => setRagQuery(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && runRagSimulation()}
+                          className="flex-1 bg-[#151825] border border-gray-850 text-white placeholder-gray-500 rounded-xl px-4 py-2 text-xs outline-none focus:border-indigo-500 text-right"
+                        />
+                        <button
+                          onClick={runRagSimulation}
+                          disabled={isSimulatingRag || !ragQuery}
+                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          {isSimulatingRag ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>جاري الاسترجاع...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Search className="w-3.5 h-3.5" />
+                              <span>اختبار المحاكاة</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Simulation results container */}
+                      {ragSimulationResults.length > 0 && (
+                        <div className="space-y-4 mt-3 border-t border-gray-800/50 pt-4">
+                          <h5 className="text-[11px] font-bold text-gray-300">أعلى المقاطع فاعلية ومطابقة المسترجعة:</h5>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-sans">
+                            {ragSimulationResults.map((r, i) => {
+                              // Chunking assessor
+                              let assessmentText = "";
+                              let assessmentStyle = "";
+                              if (r.size > 550) {
+                                assessmentText = "⚠️ تجزئة عريضة: قد تضيف ضوضاء لنموذج RAG بسبب الإسهاب اللفظي.";
+                                assessmentStyle = "text-amber-400 bg-amber-950/15 border-amber-900/40";
+                              } else if (r.size < 120) {
+                                assessmentText = "⚠️ تجزئة ضيقة جداً: خطر فقدان السياق الدلالي والأحداث المحيطة.";
+                                assessmentStyle = "text-rose-400 bg-rose-950/15 border-rose-900/40";
+                              } else {
+                                assessmentText = "✅ مقاس مثالي: يوفر كثافة معرفية مركزة وسياق كافي للاستجابة.";
+                                assessmentStyle = "text-emerald-450 bg-emerald-950/15 border-emerald-900/40";
+                              }
+
+                              return (
+                                <div key={i} className="bg-[#0e111a] border border-gray-850 p-3.5 rounded-xl flex flex-col justify-between space-y-3">
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-900 font-bold font-mono px-2 py-0.5 rounded-md">
+                                        المقطع #{r.index}
+                                      </span>
+                                      
+                                      <span className="text-[10px] font-mono font-bold text-teal-400">
+                                        تطابق: {r.score}%
+                                      </span>
+                                    </div>
+                                    
+                                    {/* Score Progress bar */}
+                                    <div className="w-full h-1.5 bg-[#171b2c] rounded-full overflow-hidden">
+                                      <div 
+                                        className="h-full bg-[#14b8a6]" 
+                                        style={{ width: `${r.score}%` }}
+                                      />
+                                    </div>
+
+                                    {/* Text content preview */}
+                                    <p className="text-[11px] text-gray-300 leading-relaxed font-sans line-clamp-4 select-all" title="اضغط مرتين لنسخ المقطع بالكامل">
+                                      {r.text}
+                                    </p>
+                                  </div>
+
+                                  <div className="space-y-1.5 border-t border-gray-850/60 pt-2.5">
+                                    <div className="flex items-center justify-between text-[9px] text-gray-500 font-mono">
+                                      <span>الطول: {r.size} حرف</span>
+                                      <span>الكلمات: {r.wordCount} كلمة</span>
+                                    </div>
+                                    <div className={`p-2 rounded border text-[9px] leading-relaxed ${assessmentStyle}`}>
+                                      {assessmentText}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          
+                          <div className="text-[10px] bg-indigo-950/20 border border-indigo-900/20 p-3 rounded-lg text-indigo-400">
+                            💡 <strong>نصيحة مهندس RAG:</strong> إذا كانت نسبة التطابق لأحد المقاطع أقل من 40% على الرغم من صلة السؤال، ينصح بمراجعة **الباب الخامس ميكانيكا التقطيع (Chunking)** وتثبيت فواصل عناوين هيراركية واضحة لتسهيل عملية الفهرسة والتقاط دقة المضمون.
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2694,65 +3416,205 @@ security_level: داخلي
                         </p>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Entities list */}
-                        <div className="bg-[#11141e] border border-gray-850 p-5 rounded-2xl space-y-4">
-                          <h4 className="text-xs font-black tracking-wider text-teal-400 uppercase border-b border-gray-800 pb-2.5">
-                            الكيانات المستخلصة (Nodes) - إجمالي {activeFile.report.entities.length}
-                          </h4>
-                          <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
-                            {activeFile.report.entities.map((node: any, idx: number) => (
-                              <div key={idx} className="p-3 bg-[#0d0f17] border border-gray-800 rounded-xl relative overflow-hidden group">
-                                <div className="absolute top-3 left-3 text-[10px] font-mono px-1.5 py-0.5 rounded font-bold uppercase bg-teal-950 text-teal-400 border border-teal-900">
-                                  {node.type || 'Concept'}
+                      <div className="space-y-6">
+                        {/* Interactive Graph Component (D3.js Graph Visualizer) */}
+                        <EntityD3Graph 
+                          entities={activeFile.report.entities}
+                          relations={activeFile.report.relations || []}
+                        />
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {/* Entities list */}
+                          <div className="bg-[#11141e] border border-gray-850 p-5 rounded-2xl space-y-4">
+                            <h4 className="text-xs font-black tracking-wider text-teal-400 uppercase border-b border-gray-800 pb-2.5">
+                              الكيانات المستخلصة (Nodes) - إجمالي {activeFile.report.entities.length}
+                            </h4>
+                            <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+                              {activeFile.report.entities.map((node: any, idx: number) => (
+                                <div key={idx} className="p-3 bg-[#0d0f17] border border-gray-800 rounded-xl relative overflow-hidden group">
+                                  <div className="absolute top-3 left-3 text-[10px] font-mono px-1.5 py-0.5 rounded font-bold uppercase bg-teal-950 text-teal-400 border border-teal-900">
+                                    {node.type || 'Concept'}
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <span className="text-[10px] text-gray-500 font-mono font-bold block">{node.id}</span>
+                                    <h5 className="font-bold text-xs text-white">{node.name}</h5>
+                                    <p className="text-[11px] text-gray-405 leading-relaxed">{node.description}</p>
+                                  </div>
                                 </div>
-                                <div className="space-y-1.5">
-                                  <span className="text-[10px] text-gray-500 font-mono font-bold block">{node.id}</span>
-                                  <h5 className="font-bold text-xs text-white">{node.name}</h5>
-                                  <p className="text-[11px] text-gray-405 leading-relaxed">{node.description}</p>
-                                </div>
-                              </div>
-                            ))}
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Relations list */}
+                          <div className="bg-[#11141e] border border-gray-850 p-5 rounded-2xl space-y-4">
+                            <div className="flex items-center justify-between border-b border-gray-800 pb-2.5">
+                              <h4 className="text-xs font-black tracking-wider text-indigo-400 uppercase">
+                                الصلات والروابط الدلالية (Relations) - إجمالي {activeFile.report.relations?.length || 0}
+                              </h4>
+                              <button
+                                onClick={() => {
+                                  const csvContent = "source,relation,target\n" + 
+                                    activeFile.report!.relations.map((r: any) => `"${r.source}","${r.relation}","${r.target}"`).join('\n');
+                                  copyToClipboard(csvContent, 'مصفوفة العلاقات بصيغة CSV');
+                                }}
+                                className="text-[10px] text-gray-400 hover:text-white transition flex items-center gap-1"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>نسخ كـ CSV triples</span>
+                              </button>
+                            </div>
+
+                            <div className="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
+                              {(!activeFile.report.relations || activeFile.report.relations.length === 0) ? (
+                                <p className="text-xs text-gray-500 py-6 text-center">لا توجد علاقات مصنفة.</p>
+                              ) : (
+                                activeFile.report.relations.map((rel: any, idx: number) => (
+                                  <div key={idx} className="p-3 bg-[#0d0f17] border border-gray-800 rounded-xl flex items-center justify-between gap-3 text-xs">
+                                    <span className="font-mono text-gray-300 font-bold">{rel.source}</span>
+                                    <div className="flex flex-col items-center flex-1">
+                                      <span className="text-[10px] text-indigo-400 font-mono font-bold bg-[#141829] px-2 py-0.5 rounded border border-gray-800">
+                                        -- {rel.relation} --&gt;
+                                      </span>
+                                    </div>
+                                    <span className="font-mono text-gray-300 font-bold text-left">{rel.target}</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
                           </div>
                         </div>
 
-                        {/* Relations list */}
-                        <div className="bg-[#11141e] border border-gray-850 p-5 rounded-2xl space-y-4">
-                          <div className="flex items-center justify-between border-b border-gray-800 pb-2.5">
-                            <h4 className="text-xs font-black tracking-wider text-indigo-400 uppercase">
-                              الصلات والروابط الدلالية (Relations) - إجمالي {activeFile.report.relations?.length || 0}
-                            </h4>
+                        {/* Integrated RAG simulation inside visualizer room */}
+                        <div className="bg-[#11141e] border border-indigo-900/40 rounded-2xl p-5 space-y-4 text-right">
+                          <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-teal-400 font-mono tracking-wider">اختبار الاستجابات السريعة والـ Graph</span>
+                              <h4 className="text-xs font-bold text-white flex items-center gap-1.5 mt-0.5">
+                                <Layers className="w-4 h-4 text-indigo-400" />
+                                <span>محاكاة استرداد RAG وتقييم جودة التقطيع (Chunking Quality Assess)</span>
+                              </h4>
+                            </div>
+                            <span className="text-[9px] font-mono text-gray-500 bg-gray-950 px-2.5 py-1 rounded border border-gray-850">
+                              Retrieval Index: Hybrid Jaccard Terms Overlap
+                            </span>
+                          </div>
+
+                          <p className="text-xs text-gray-400 leading-relaxed">
+                            اكتب سؤالاً أو فكرة هنا لمحاكاة كيف سيقوم محرك RAG باسترجاع مقاطع من هذا الملف. ستعرض النتائج المقاطع المسترجعة بدقة، نسبة المطابقة المتوقعة، وتقرير جودة التقطيع (Chunking).
+                          </p>
+
+                          {/* Suggested preset click tags */}
+                          <div className="flex flex-wrap gap-2 pt-1 pb-2">
+                            <span className="text-[10px] text-gray-400 font-bold self-center">💡 أسئلة سريعة:</span>
+                            {[
+                              "ما هو الموضوع الأساسي؟",
+                              "هل توجد تواريخ محدثة؟",
+                              "من هو مالك المستند والمسؤول؟",
+                              "ما هي شروط السفر والمستحقات؟"
+                            ].map((qText, index) => (
+                              <button
+                                key={index}
+                                onClick={() => {
+                                  setRagQuery(qText);
+                                  runRagSimulation(qText);
+                                }}
+                                className="bg-[#181d30] hover:bg-teal-650 hover:bg-teal-950/20 hover:text-teal-400 border border-indigo-900/50 hover:border-teal-800 text-gray-300 text-[10px] px-2.5 py-1 rounded-lg transition select-none flex items-center gap-1 cursor-pointer"
+                              >
+                                <span>#{index + 1}</span>
+                                <span>{qText}</span>
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="flex gap-2.5">
+                            <input
+                              type="text"
+                              placeholder="مثال: من هو كاتب المستند؟ أو اكتب أي كلمة مفتاحية حيوية..."
+                              value={ragQuery}
+                              onChange={(e) => setRagQuery(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && runRagSimulation()}
+                              className="flex-1 bg-[#151825] border border-gray-850 text-white placeholder-gray-500 rounded-xl px-4 py-2 text-xs outline-none focus:border-indigo-500 text-right"
+                            />
                             <button
-                              onClick={() => {
-                                const csvContent = "source,relation,target\n" + 
-                                  activeFile.report!.relations.map((r: any) => `"${r.source}","${r.relation}","${r.target}"`).join('\n');
-                                copyToClipboard(csvContent, 'مصفوفة العلاقات بصيغة CSV');
-                              }}
-                              className="text-[10px] text-gray-400 hover:text-white transition flex items-center gap-1"
+                              onClick={() => runRagSimulation()}
+                              disabled={isSimulatingRag || !ragQuery}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                             >
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>نسخ كـ CSV triples</span>
+                              {isSimulatingRag ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  <span>جاري الاسترجاع...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Search className="w-3.5 h-3.5" />
+                                  <span>اختبار المحاكاة</span>
+                                </>
+                              )}
                             </button>
                           </div>
 
-                          <div className="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
-                            {(!activeFile.report.relations || activeFile.report.relations.length === 0) ? (
-                              <p className="text-xs text-gray-500 py-6 text-center">لا توجد علاقات مصنفة.</p>
-                            ) : (
-                              activeFile.report.relations.map((rel: any, idx: number) => (
-                                <div key={idx} className="p-3 bg-[#0d0f17] border border-gray-800 rounded-xl flex items-center justify-between gap-3 text-xs">
-                                  <span className="font-mono text-gray-300 font-bold">{rel.source}</span>
-                                  <div className="flex flex-col items-center flex-1">
-                                    <span className="text-[10px] text-indigo-400 font-mono font-bold bg-[#141829] px-2 py-0.5 rounded border border-gray-800">
-                                      -- {rel.relation} --&gt;
-                                    </span>
-                                  </div>
-                                  <span className="font-mono text-gray-300 font-bold text-left">{rel.target}</span>
-                                </div>
-                              ))
-                            )}
-                          </div>
+                          {/* Simulation results container */}
+                          {ragSimulationResults.length > 0 && (
+                            <div className="space-y-4 mt-3 border-t border-gray-800/50 pt-4">
+                              <h5 className="text-[11px] font-bold text-gray-300">أعلى المقاطع فاعلية ومطابقة المسترجعة:</h5>
+                              
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-sans">
+                                {ragSimulationResults.map((r, i) => {
+                                  let assessmentText = "";
+                                  let assessmentStyle = "";
+                                  if (r.size > 550) {
+                                    assessmentText = "⚠️ تجزئة عريضة: قد تضيف ضوضاء لنموذج RAG بسبب الإسهاب اللفظي.";
+                                    assessmentStyle = "text-amber-400 bg-amber-950/15 border-amber-900/40";
+                                  } else if (r.size < 120) {
+                                    assessmentText = "⚠️ تجزئة ضيقة جداً: خطر فقدان السياق الدلالي والأحداث المحيطة.";
+                                    assessmentStyle = "text-rose-400 bg-rose-950/15 border-rose-900/40";
+                                  } else {
+                                    assessmentText = "✅ مقاس مثالي: يوفر كثافة معرفية مركزة وسياق كافي للاستجابة.";
+                                    assessmentStyle = "text-emerald-450 bg-emerald-950/15 border-emerald-900/40";
+                                  }
+
+                                  return (
+                                    <div key={i} className="bg-[#0e111a] border border-gray-850 p-3.5 rounded-xl flex flex-col justify-between space-y-3">
+                                      <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-900 font-bold font-mono px-2 py-0.5 rounded-md">
+                                            المقطع #{r.index}
+                                          </span>
+                                          <span className="text-[10px] font-mono font-bold text-teal-400">
+                                            تطابق: {r.score}%
+                                          </span>
+                                        </div>
+                                        
+                                        <div className="w-full h-1.5 bg-[#171b2c] rounded-full overflow-hidden">
+                                          <div 
+                                            className="h-full bg-[#14b8a6]" 
+                                            style={{ width: `${r.score}%` }}
+                                          />
+                                        </div>
+
+                                        <p className="text-[11px] text-gray-300 leading-relaxed font-sans line-clamp-4 select-all">
+                                          {r.text}
+                                        </p>
+                                      </div>
+
+                                      <div className="space-y-1.5 border-t border-gray-850/60 pt-2.5">
+                                        <div className="flex items-center justify-between text-[9px] text-gray-500 font-mono">
+                                          <span>الطول: {r.size} حرف</span>
+                                          <span>الكلمات: {r.wordCount} كلمة</span>
+                                        </div>
+                                        <div className={`p-2 rounded border text-[9px] leading-relaxed ${assessmentStyle}`}>
+                                          {assessmentText}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
+
                       </div>
                     )}
                   </div>
