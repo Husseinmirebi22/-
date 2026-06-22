@@ -17,18 +17,32 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Load File Extensions Reference Database (v1.1)
+// Load File Extensions Reference Database (v2.1)
 let extDatabase: any = null;
 try {
-  const dbPath = path.join(process.cwd(), 'src', 'file_extensions_reference_db_v1.1.json');
+  const dbPath = path.join(process.cwd(), 'src', 'file_extensions_reference_db_v2.1.json');
   if (fs.existsSync(dbPath)) {
     extDatabase = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
-    console.log(`Successfully loaded extensions reference database with ${extDatabase?.metadata?.total_extensions} extensions.`);
+    console.log(`Successfully loaded extensions reference database v2.1 with ${extDatabase?.metadata?.total_extensions} extensions.`);
   } else {
     console.warn(`Database file not found at ${dbPath}`);
   }
 } catch (err) {
   console.error('Failed to load file extensions reference database:', err);
+}
+
+// Load Enriched File Extensions Database (v2.1) for Scientific & Medical classifications
+let enrichedDatabase: any = null;
+try {
+  const enrichedPath = path.join(process.cwd(), 'src', 'extensions_enriched_v2.1.json');
+  if (fs.existsSync(enrichedPath)) {
+    enrichedDatabase = JSON.parse(fs.readFileSync(enrichedPath, 'utf8'));
+    console.log(`Successfully loaded enriched extensions database with ${enrichedDatabase?.extensions?.length} records.`);
+  } else {
+    console.warn(`Enriched Database file not found at ${enrichedPath}`);
+  }
+} catch (err) {
+  console.error('Failed to load enriched extensions database:', err);
 }
 
 // Allow parsing larger payloads (for big documents or ZIP files)
@@ -100,7 +114,29 @@ function runProgrammaticAudit(fileName: string, content: string, size: number) {
     );
   }
 
-  if (foundGroup) {
+  // Look in enriched database (Scientific & Medical schemas)
+  let enrichedInfo: any = null;
+  if (enrichedDatabase && enrichedDatabase.extensions) {
+    enrichedInfo = enrichedDatabase.extensions.find((e: any) => e.extension === fileExt);
+  }
+
+  if (enrichedInfo) {
+    const riskLabel = enrichedInfo.security_risk === 'high' ? 'عالية الحساسية والمخاطر 🚨' : enrichedInfo.security_risk === 'medium' ? 'متوسطة الحساسية ⚠️' : 'آمنة ومثبتة';
+    const convMsg = enrichedInfo.can_be_converted_to_markdown ? 'قابل وجاهز للتحويل الهيكلي لـ Markdown.' : 'صيغة ثنائية أو مع البيانات الحيوية، لا تحول مباشرة بل عبر مفرغات أو أدوات استخلاص المعرفة.';
+    
+    let processableStatus: 'PASS' | 'PARTIAL' | 'FAIL' = 'PASS';
+    if (enrichedInfo.processability === 'binary_not_processable') {
+      processableStatus = 'FAIL';
+    } else if (enrichedInfo.processability === 'extractable') {
+      processableStatus = 'PARTIAL';
+    }
+
+    statusObject["1.2.1"] = {
+      status: processableStatus,
+      reasoning: `تم الفحص الدقيق بالرجوع لبروتوكول المعرفة الموحد والامتدادات المثرية v2.1. نوع المستند المرفوع: [${enrichedInfo.type}] ضمن عائلة: "${enrichedInfo.group_name}". الحساسية الأمنية: [${riskLabel}]. ${enrichedInfo.notes}`,
+      recommendation: `الأداة المفضلة للفحص: (${enrichedInfo.extraction_tool || 'معالجة نصية مباشرة بقارئ النظام'}). الطريقة: (${enrichedInfo.extraction_method || 'مسح دلالي'}). التوجيه: ${convMsg} ` + (enrichedInfo.preprocessing_steps.length ? `الخطوات التمهيدية للإعداد: [${enrichedInfo.preprocessing_steps.join(', ')}].` : '')
+    };
+  } else if (foundGroup) {
     const isNativeRAGType = ['md', 'json', 'jsonl', 'txt'].includes(fileExt);
     if (isNativeRAGType) {
       statusObject["1.2.1"] = {

@@ -8,7 +8,8 @@ import {
   FileText, Upload, AlertCircle, CheckCircle2, XCircle, HelpCircle, 
   ChevronDown, ChevronUp, Copy, Download, RefreshCw, Layers, Shield, 
   Database, Activity, Users, FileCode, Check, Eye, Trash2, ArrowLeftRight,
-  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks, Link, Sun, Moon
+  Sparkles, Sliders, History, BookOpen, Clock, FileDown, Settings, Search, X, Mail, CheckSquare, StickyNote, ListChecks, Link, Sun, Moon,
+  AlertTriangle, ShieldCheck, Fingerprint, TerminalSquare
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { CHECKLIST_CHAPTERS, DEFAULT_CHECKLIST_ITEMS } from './checklistData';
@@ -17,7 +18,8 @@ import { initAuth, googleSignIn, logout, getAccessToken } from './lib/firebase';
 import WorkspaceImport from './components/WorkspaceImport';
 import CompareView from './components/CompareView';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import extDatabase from './file_extensions_reference_db_v1.1.json';
+import extDatabase from './file_extensions_reference_db_v2.1.json';
+import enrichedDatabase from './extensions_enriched_v2.1.json';
 
 export default function App() {
   // Main State
@@ -38,8 +40,31 @@ export default function App() {
   const [simStatus, setSimStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
   
   // Custom Weights and Ignores for Expert Mode
-  const [excludedItemIds, setExcludedItemIds] = useState<Set<string>>(new Set());
-  const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
+  const [excludedItemIds, setExcludedItemIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('sfa_excluded_items');
+      if (saved) return new Set<string>(JSON.parse(saved));
+    } catch(e) {}
+    return new Set();
+  });
+  const [customWeights, setCustomWeights] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('sfa_custom_weights');
+      if (saved) return JSON.parse(saved);
+    } catch(e) {}
+    return {};
+  });
+
+  useEffect(() => {
+    localStorage.setItem('sfa_excluded_items', JSON.stringify(Array.from(excludedItemIds)));
+  }, [excludedItemIds]);
+
+  useEffect(() => {
+    localStorage.setItem('sfa_custom_weights', JSON.stringify(customWeights));
+  }, [customWeights]);
+  
+  const [patternSearchText, setPatternSearchText] = useState('');
+  const [patternSearchCategory, setPatternSearchCategory] = useState<'PII' | 'PASSWORD' | 'CUSTOM'>('CUSTOM');
   
   // UI helpers
   const [expandedChapter, setExpandedChapter] = useState<number | null>(1);
@@ -58,6 +83,7 @@ export default function App() {
 
   // Sidebar Search
   const [sidebarSearch, setSidebarSearch] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   
   // Workspace Auth State
   const [needsAuth, setNeedsAuth] = useState(false);
@@ -195,10 +221,106 @@ export default function App() {
   // Helper to trigger active file
   const activeFile = files.find(f => f.id === selectedFileId);
 
-  // Sidebar search filtering
-  const filteredFiles = files.filter(file => 
-    file.name.toLowerCase().includes(sidebarSearch.toLowerCase())
-  );
+  // Sidebar search filtering with autocomplete based on type, status, or group from enriched Database
+  const filteredFiles = files.filter(file => {
+    const q = sidebarSearch.toLowerCase().trim();
+    if (!q) return true;
+
+    // Check if it's a specific "status:" or "حالة:" search
+    if (q.startsWith('حالة:') || q.startsWith('status:')) {
+      const statusTerm = q.replace(/^(حالة:|status:)/, '').trim().toUpperCase();
+      if (!file.report) return false;
+      const score = file.report.complianceScore;
+      if (statusTerm === 'PASS' || statusTerm === 'ناجح') {
+        return score >= 80;
+      } else if (statusTerm === 'FAIL' || statusTerm === 'راسب') {
+        return score < 50;
+      } else if (statusTerm === 'PARTIAL' || statusTerm === 'جزئي') {
+        return score >= 50 && score < 80;
+      }
+    }
+
+    // Check if it's a specific "type:" or "نوع:"
+    if (q.startsWith('نوع:') || q.startsWith('type:')) {
+      const typeTerm = q.replace(/^(نوع:|type:)/, '').trim();
+      const ext = file.name.substring(file.name.lastIndexOf('.') + 1).toLowerCase();
+      const enriched = enrichedDatabase?.extensions?.find((e: any) => e.extension === ext);
+      if (!enriched) return file.type?.toLowerCase().includes(typeTerm) || ext.includes(typeTerm);
+      return (
+        enriched.type?.toLowerCase().includes(typeTerm) ||
+        enriched.group_name?.toLowerCase().includes(typeTerm) ||
+        enriched.mime_type?.toLowerCase().includes(typeTerm) ||
+        file.type?.toLowerCase().includes(typeTerm)
+      );
+    }
+
+    // Check if it's a specific "امتداد:" or "ext:" or "extension:"
+    if (q.startsWith('امتداد:') || q.startsWith('ext:') || q.startsWith('extension:')) {
+      const extTerm = q.replace(/^(امتداد:|ext:|extension:)/, '').trim();
+      const ext = file.name.substring(file.name.lastIndexOf('.') + 1).toLowerCase();
+      return ext === extTerm;
+    }
+
+    // Fallback: general search (name, or found extension group)
+    const ext = file.name.substring(file.name.lastIndexOf('.') + 1).toLowerCase();
+    const enriched = enrichedDatabase?.extensions?.find((e: any) => e.extension === ext);
+    const inEnriched = enriched ? (
+      enriched.type?.toLowerCase().includes(q) ||
+      enriched.group_name?.toLowerCase().includes(q)
+    ) : false;
+
+    // Report status fallback
+    let isStatusMatch = false;
+    if (file.report) {
+      const score = file.report.complianceScore;
+      if (q === 'ناجح' || q === 'pass') isStatusMatch = score >= 80;
+      else if (q === 'راسب' || q === 'fail') isStatusMatch = score < 50;
+      else if (q === 'جزئي' || q === 'partial') isStatusMatch = score >= 50 && score < 80;
+    }
+
+    return (
+      file.name.toLowerCase().includes(q) ||
+      file.type?.toLowerCase().includes(q) ||
+      inEnriched ||
+      isStatusMatch
+    );
+  });
+
+  const getAutocompleteSuggestions = () => {
+    // Generate dynamic suggestions based on active files
+    const activeExtensions = Array.from(new Set(files.map(f => f.name.substring(f.name.lastIndexOf('.') + 1).toLowerCase())));
+    const suggestions: { label: string; value: string; category: string }[] = [];
+
+    // Add status suggestion
+    suggestions.push({ label: 'مستندات مجتازة الفحص (ناجح)', value: 'حالة: ناجح', category: 'الحالة (Status)' });
+    suggestions.push({ label: 'مستندات تحتوي أخطاء جسيمة (راسب)', value: 'حالة: راسب', category: 'الحالة (Status)' });
+    suggestions.push({ label: 'مستندات بمراتب وسيطة (جزئي)', value: 'حالة: جزئي', category: 'الحالة (Status)' });
+
+    // Add extension & type suggestions from enriched DB for our active files
+    activeExtensions.forEach((ext: any) => {
+      suggestions.push({ label: `كل ملفات الامتداد .${(ext || '').toUpperCase()}`, value: `امتداد: ${ext}`, category: 'الامتداد (Extension)' });
+      
+      const enriched = enrichedDatabase?.extensions?.find((e: any) => e.extension === ext);
+      if (enriched) {
+        suggestions.push({ label: `مستندات من تصنيف: ${enriched.type}`, value: `نوع: ${enriched.type}`, category: 'التصنيف (Type)' });
+        suggestions.push({ label: `مجموعة البيانات: ${enriched.group_name}`, value: `نوع: ${enriched.group_name}`, category: 'المجموعة (Group)' });
+      }
+    });
+
+    // Also add general medical/scientific classifications as static helper suggestions
+    suggestions.push({ label: 'الملفات والمسوحات الطبية (MRI/CT/EEG/DICOM)', value: 'نوع: طبي', category: 'البيانات الطبية (Medical)' });
+    suggestions.push({ label: 'البيانات الهندسية والفلكية والمناخية', value: 'نوع: علمي', category: 'البيانات العلمية (Scientific)' });
+
+    // Filter based on currently typed text
+    const typed = sidebarSearch.toLowerCase().trim();
+    if (!typed) return suggestions.slice(0, 5); // top 5 general defaults
+    
+    return suggestions.filter(s => 
+      s.label.toLowerCase().includes(typed) || 
+      s.value.toLowerCase().includes(typed) || 
+      s.category.toLowerCase().includes(typed)
+    ).slice(0, 6);
+  };
 
   const handleUrlImport = async () => {
     if (!importUrl) return;
@@ -308,10 +430,17 @@ export default function App() {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, loading: true, error: undefined } : f));
     
     // Prepare checklist database
+    const defaultWeight = (priority: string) => {
+      if (priority === 'MUST_HAVE') return 10.0;
+      if (priority === 'SHOULD_HAVE') return 5.0;
+      if (priority === 'NICE_TO_HAVE') return 2.0;
+      return 1.0;
+    };
+
     const localChecklist = DEFAULT_CHECKLIST_ITEMS.map(item => ({
       ...item,
-      // Apply custom weight if set
-      weight: customWeights[item.id] !== undefined ? customWeights[item.id] : 1.0,
+      // Apply custom weight if set, otherwise use priority-based weight
+      weight: customWeights[item.id] !== undefined ? customWeights[item.id] : defaultWeight(item.priority),
       // Ignore if set in expert state
       status: excludedItemIds.has(item.id) ? 'NOT_APPLICABLE' as const : 'NOT_APPLICABLE' as const
     }));
@@ -425,8 +554,54 @@ export default function App() {
     }
   };
 
+  const handleExpertPatternSearch = () => {
+    if (!activeFile || !activeFile.report || !patternSearchText) return;
+
+    try {
+      const regex = new RegExp(patternSearchText, 'i');
+      const hasPattern = regex.test(activeFile.content);
+
+      const newItemId = `S-CUSTOM-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      
+      let label = patternSearchCategory === 'PII' ? 'بيانات شخصية (بحث دوري)' : 
+                  patternSearchCategory === 'PASSWORD' ? 'كلمات مرور مشفرة (بحث دوري)' : 
+                  'حساسية أمنية مخصصة';
+
+      const newAuditItem: AuditItem = {
+        id: newItemId,
+        name: `بحث الخبير: ${label}`,
+        chapter: 7,
+        priority: 'MUST_HAVE',
+        description: `تم إضافته يدوياً بواسطة الخبير: البحث عن النمط (${patternSearchText})`,
+        successCriteria: `يجب ألا يحتوي الملف على الأنماط المطابقة لـ /${patternSearchText}/`,
+        status: hasPattern ? 'FAIL' : 'PASS',
+        category: 'Security',
+        reasoning: hasPattern ? `تم تطابق النمط المطلوب في المستند.` : `لم يتم العثور على النمط في المستند.`,
+        recommendation: hasPattern ? 'مراجعة وتطهير المستند من هذه المقتطفات السرية أو الحساسة، وإزالتها تماماً.' : undefined
+      };
+
+      const updatedItems = [...activeFile.report.items, newAuditItem];
+      recalculateCustomScore(updatedItems, excludedItemIds);
+      showToast(hasPattern ? 'تحذير: تم العثور على النمط المحدد في الملف!' : 'آمن: لم يتم العثور على النمط.');
+      setPatternSearchText('');
+    } catch (e) {
+      showToast('رسالة خطأ: النمط/التعبير النمطي (Regex) غير صالح.');
+    }
+  };
+
   const updateItemWeightByAmount = (itemId: string, increment: boolean) => {
-    const current = customWeights[itemId] !== undefined ? customWeights[itemId] : 1.0;
+    let current = 1.0;
+    if (customWeights[itemId] !== undefined) {
+      current = customWeights[itemId];
+    } else {
+      const item = DEFAULT_CHECKLIST_ITEMS.find(i => i.id === itemId);
+      if (item) {
+        if (item.priority === 'MUST_HAVE') current = 10.0;
+        else if (item.priority === 'SHOULD_HAVE') current = 5.0;
+        else if (item.priority === 'NICE_TO_HAVE') current = 2.0;
+      }
+    }
+
     let next = increment ? current + 0.5 : current - 0.5;
     if (next < 0) next = 0;
     
@@ -457,8 +632,15 @@ export default function App() {
     let totalScoreVal = 0;
     let totalWeight = 0;
 
+    const defaultWeight = (item: AuditItem) => {
+      if (item.priority === 'MUST_HAVE') return 10.0;
+      if (item.priority === 'SHOULD_HAVE') return 5.0;
+      if (item.priority === 'NICE_TO_HAVE') return 2.0;
+      return 1.0;
+    };
+
     applicable.forEach(item => {
-      const w = weights[item.id] !== undefined ? weights[item.id] : 1.0;
+      const w = weights[item.id] !== undefined ? weights[item.id] : defaultWeight(item);
       let points = 0;
       if (item.status === 'PASS') points = 1.0;
       else if (item.status === 'PARTIAL') points = 0.5;
@@ -486,12 +668,43 @@ export default function App() {
     } : f));
   };
 
-  // Auto clean execution directly using backend output
+  // Auto clean execution directly using backend output and frontend formatting
   const applyCleanFixToFile = () => {
     if (!activeFile || !activeFile.report || !activeFile.report.cleanedContent) return;
     
     const originalName = activeFile.name;
-    const cleanContent = activeFile.report.cleanedContent;
+    let cleanContent = activeFile.report.cleanedContent;
+
+    // Advanced YAML Front Matter formatting & injection (G-28)
+    const hasFrontMatter = cleanContent.startsWith('---');
+    if (!hasFrontMatter) {
+      const today = new Date().toISOString().split('T')[0];
+      const yamlBlueprint = `---
+title: "${originalName.replace(/\.[^/.]+$/, "")}"
+doc_id: "DOC-${Math.random().toString(36).substring(2, 8).toUpperCase()}"
+version: "1.0"
+last_updated: "${today}"
+owner: "إدارة هندسة المعرفة"
+tags: []
+audience: []
+type: "مرجع"
+summary: "تمت المعالجة تلقائياً بواسطة المدقق الذكي."
+output_format: "نص سردي"
+security_level: "عام"
+---
+
+`;
+      cleanContent = yamlBlueprint + cleanContent;
+    } else {
+      // Ensure specific fields exist if there is a front matter block
+      const frontMatterEnd = cleanContent.indexOf('---', 3);
+      if (frontMatterEnd !== -1) {
+        let fmBlock = cleanContent.substring(3, frontMatterEnd);
+        if (!fmBlock.includes('security_level:')) fmBlock += '\nsecurity_level: "عام"';
+        if (!fmBlock.includes('doc_id:')) fmBlock += `\ndoc_id: "DOC-${Math.random().toString(36).substring(2, 8).toUpperCase()}"`;
+        cleanContent = '---\n' + fmBlock.trim() + '\n---\n' + cleanContent.substring(frontMatterEnd + 3).trimStart();
+      }
+    }
 
     // Update active file content
     setFiles(prev => prev.map(f => f.id === selectedFileId ? {
@@ -500,7 +713,7 @@ export default function App() {
       size: cleanContent.length
     } : f));
 
-    showToast('تم تطبيق التنظيف وحل الأخطاء الصياغية! جاري إعادة الفحص للتأكيد...');
+    showToast('تم تطبيق التنظيف وتنسيق YAML الأمثل وحل الأخطاء الصياغية! جاري إعادة الفحص...');
     
     // Trigger audit again on the updated clean content
     triggerAuditForFile(activeFile.id, cleanContent, originalName, cleanContent.length);
@@ -1001,8 +1214,10 @@ export default function App() {
                     type="text"
                     value={sidebarSearch}
                     onChange={(e) => setSidebarSearch(e.target.value)}
-                    placeholder="ابحث عن ملف بالاسم..."
-                    className="w-full bg-[#141824] border border-gray-800 rounded-xl pr-9 pl-8 py-2 text-xs text-white placeholder-gray-500 focus:border-teal-500 focus:ring-1 focus:ring-teal-500/20 outline-none transition"
+                    onFocus={() => setIsSearchFocused(true)}
+                    onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+                    placeholder="ابحث بـ الاسم، حالة: ناجح، نوع: طبي..."
+                    className="w-full bg-[#141824] border border-gray-800 rounded-xl pr-9 pl-8 py-2 text-xs text-white placeholder-gray-500 focus:border-[#4f46e5] focus:ring-1 focus:ring-[#4f46e5]/20 outline-none transition"
                   />
                   {sidebarSearch && (
                     <button
@@ -1012,6 +1227,27 @@ export default function App() {
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
+                  )}
+                  {isSearchFocused && (
+                    <div className="absolute left-0 right-0 mt-1 bg-[#10131f] border border-gray-800 rounded-xl shadow-xl z-50 overflow-hidden text-right leading-relaxed max-h-60 overflow-y-auto">
+                      <div className="p-2 border-b border-gray-800 bg-[#0d0f17] text-[10px] text-gray-400 font-bold flex justify-between items-center direction-rtl">
+                        <span>مقترحات الربط التلقائي والبحث</span>
+                        <button type="button" onMouseDown={() => setIsSearchFocused(false)} className="hover:text-white">إغلاق</button>
+                      </div>
+                      {getAutocompleteSuggestions().map((s, idx) => (
+                        <div
+                          key={idx}
+                          onMouseDown={() => {
+                            setSidebarSearch(s.value);
+                            setIsSearchFocused(false);
+                          }}
+                          className="p-2 hover:bg-[#161a29] cursor-pointer border-b border-gray-900/50 last:border-0 flex flex-col transition text-right"
+                        >
+                          <span className="text-xs text-gray-200 font-semibold">{s.label}</span>
+                          <span className="text-[9px] text-[#2dd4bf] font-mono mt-0.5">{s.category} • {s.value}</span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               )}
@@ -1081,11 +1317,11 @@ export default function App() {
                 <span>البروتوكول المعياري</span>
               </h4>
               <p className="text-[11px] text-gray-400 leading-relaxed">
-                يتبع هذا المدقق الإصدار 2.0 من قائمة التدقيق الموحدة المعتمدة لدى إدارة هندسة المعرفة لضمان الفحص الدلالي والصوان وتطهير قواعد الاسترجاع المعقدة.
+                يتبع هذا المدقق الإصدار 2.1 الأحدث من قائمة التدقيق الموحدة المعتمدة لدى إدارة هندسة المعرفة لضمان الفحص الدلالي والصوان وتطهير قواعد الاسترجاع المعقدة (ويشمل دعم Graph RAG والأمن المتقدم).
               </p>
               <div className="border-t border-gray-800 pt-2 flex items-center justify-between text-[10px] text-gray-500">
-                <span>تحديث: 2026-06-08</span>
-                <span className="text-indigo-400 font-bold">إصدار 2.0 موحد</span>
+                <span>تحديث: 2026-06-21</span>
+                <span className="text-indigo-400 font-bold">إصدار 2.1 الموحد</span>
               </div>
             </div>
           </div>
@@ -1413,6 +1649,97 @@ security_level: داخلي
                               </span>
                               <span className="text-[9px] text-gray-500 mt-1 block truncate" dir="ltr">{activeFile.name}</span>
                             </div>
+                          </div>
+
+                          {/* Enriched Database Properties Block */}
+                          {(() => {
+                            const ext = activeFile.name.substring(activeFile.name.lastIndexOf('.') + 1).toLowerCase();
+                            const enriched = enrichedDatabase?.extensions?.find((e: any) => e.extension === ext);
+                            if (!enriched) return null;
+                            return (
+                              <div className="mt-4 bg-[#141a29]/80 border border-indigo-900/60 p-4 rounded-xl text-right">
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-400">
+                                  <Sparkles className="w-4 h-4 text-indigo-400" />
+                                  <span>بروتوكول الامتدادات المثرية v2.1: المعرف الفريد [{enriched.extension_id}]</span>
+                                </div>
+                                <p className="text-[11px] text-gray-400 mt-1">يعود هذا الملف لعائلة: <strong>{enriched.group_name}</strong>. يملك دعماً وتصنيفاً خاصاً طبقاً للدستور المعرفي الموحد.</p>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-xs text-gray-300 border-t border-gray-800/60 pt-3">
+                                  <div>
+                                    <span className="text-gray-500 font-semibold block text-[10px]">النوع دلالياً</span>
+                                    <span className="font-mono text-gray-200 mt-1 block font-semibold">{enriched.type}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 font-semibold block text-[10px]">أدوات وطريقة المعالجة</span>
+                                    <span className="text-gray-200 mt-1 block font-semibold">أداة: {enriched.extraction_tool || 'نص مباشر'} • طريقة: {enriched.extraction_method || 'سردي'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 font-semibold block text-[10px]">ملاحظات الفحص ونقاط التضمين</span>
+                                    <span className="text-gray-200 mt-1 block font-semibold">{enriched.notes}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Security and Protection Shield (إخفاء PII ومكافحة حقن الأوامر) */}
+                    {(() => {
+                      if (!activeFile.report) return null;
+                      const securityItems = activeFile.report.items.filter(it => it.id === 'S-02' || it.id === 'S-06');
+                      if (securityItems.length === 0) return null;
+
+                      const hasSecurityFail = securityItems.some(it => it.status === 'FAIL');
+                      
+                      return (
+                        <div className={`border rounded-2xl p-5 relative overflow-hidden ${hasSecurityFail ? 'bg-rose-950/20 border-rose-900' : 'bg-emerald-950/10 border-emerald-900/50'}`}>
+                          <div className={`absolute top-0 left-0 w-32 h-32 rounded-full blur-3xl -z-10 ${hasSecurityFail ? 'bg-rose-500/10 animate-pulse' : 'bg-emerald-500/5'}`}></div>
+                          
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                            <div>
+                              <span className={`text-[10px] uppercase font-bold font-mono tracking-wider ${hasSecurityFail ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                نظام الحماية والمناعة (Security Shield 2.1)
+                              </span>
+                              <h3 className="text-sm font-bold text-white mt-0.5 flex items-center gap-1.5">
+                                {hasSecurityFail ? <AlertTriangle className="w-4 h-4 text-rose-500" /> : <ShieldCheck className="w-4 h-4 text-emerald-500" />}
+                                <span>حالة التدقيق الأمني لبيانات المستند</span>
+                              </h3>
+                            </div>
+                            {hasSecurityFail && (
+                              <span className="text-[10px]text-rose-200 bg-rose-500/20 px-3 py-1.5 rounded-full border border-rose-500/30 font-bold flex items-center gap-1.5 animate-pulse">
+                                <span>⚠️ خطأ حرج (MUST_HAVE) أمني</span>
+                              </span>
+                            )}
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {securityItems.map(sec => (
+                              <div key={sec.id} className="bg-[#141824]/60 p-3.5 rounded-xl border border-gray-850/60 flex flex-col justify-between">
+                                <div>
+                                  <div className="flex items-start justify-between">
+                                    <span className="text-[11px] text-gray-300 font-bold flex items-center gap-1 mb-1.5">
+                                      {sec.id === 'S-06' ? <TerminalSquare className="w-3.5 h-3.5 text-amber-500" /> : <Fingerprint className="w-3.5 h-3.5 text-blue-400" />}
+                                      <span>{sec.name}</span>
+                                    </span>
+                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded border ${
+                                      sec.status === 'PASS' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+                                      sec.status === 'FAIL' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 
+                                      'bg-gray-800 text-gray-400 border-gray-700'
+                                    }`}>
+                                      {sec.status === 'PASS' ? 'آمن ومجتاز' : sec.status === 'FAIL' ? 'خطر - لم يجتز' : 'غير مختبر'}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-gray-500 leading-relaxed mt-2">{sec.description}</p>
+                                </div>
+                                {sec.status === 'FAIL' && sec.recommendation && (
+                                  <div className="mt-3 bg-rose-500/10 border border-rose-500/20 p-2 rounded text-[10px] text-rose-300">
+                                    <span className="font-bold block mb-0.5 text-rose-400">التوصية الأمنية:</span>
+                                    {sec.recommendation}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
                           </div>
                         </div>
                       );
@@ -1808,32 +2135,25 @@ security_level: داخلي
                         exactReportText += `1. لا توجد إصلاحات مطلوبة عاجلة. الملف متوافق بالكامل.\n`;
                       }
                       
-                      exactReportText += `\n## تفاصيل الفحص (حسب الأبواب العشرة)\n`;
+                      exactReportText += `\n## تفاصيل الفحص (حسب جميع الأبواب)\n`;
                       
-                      // Add table for Chapter 1 as requested in requirements prompt
-                      exactReportText += `### الباب الأول: الهوية والبيانات الوصفية\n`;
-                      exactReportText += `| البند | النتيجة | التوصية |\n`;
-                      exactReportText += `|-------|---------|----------|\n`;
-                      
-                      const chap1Items = activeFile.report?.items.filter(it => it.chapter === 1) || [];
-                      chap1Items.forEach(it => {
-                        const statusAr = it.status === 'PASS' ? 'نعم' : it.status === 'FAIL' ? 'لا' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى';
-                        const recText = it.status === 'PASS' ? 'الملف متطابق' : it.recommendation || 'يفضل المراجعة';
-                        exactReportText += `| ${it.id} ${it.name} | ${statusAr} | ${recText.replace(/\n/g, ' ')} |\n`;
+                      CHECKLIST_CHAPTERS.forEach((chapter, index) => {
+                        const chapterItems = activeFile.report?.items.filter(it => it.chapter === chapter.id) || [];
+                        if (chapterItems.length > 0) {
+                          exactReportText += `### الباب ${index + 1}: ${chapter.title.split(': ')[1] || chapter.title}\n`;
+                          exactReportText += `| البند | النتيجة | التوصية |\n`;
+                          exactReportText += `|-------|---------|----------|\n`;
+                          chapterItems.forEach(it => {
+                            const statusAr = it.status === 'PASS' ? 'نعم' : it.status === 'FAIL' ? 'لا' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى/غير مطبق';
+                            const recText = it.status === 'PASS' ? 'الملف متطابق' : it.recommendation || 'يفضل المراجعة وتطبيق المعيار';
+                            exactReportText += `| ${it.id} ${it.name} | ${statusAr} | ${recText.replace(/\n/g, ' ')} |\n`;
+                          });
+                          exactReportText += `\n`;
+                        }
                       });
 
-                      // Let's add remaining chapters representation
-                      exactReportText += `\n### الباب الثاني: الهيكل والتنظيم الداخلي\n`;
-                      exactReportText += `| البند | النتيجة | التوصية |\n`;
-                      exactReportText += `|-------|---------|----------|\n`;
-                      const chap2Items = activeFile.report?.items.filter(it => it.chapter === 2) || [];
-                      chap2Items.forEach(it => {
-                        const statusAr = it.status === 'PASS' ? 'نعم' : it.status === 'FAIL' ? 'لا' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى';
-                        exactReportText += `| ${it.id} ${it.name} | ${statusAr} | ${it.recommendation?.replace(/\n/g, ' ') || 'متطابق'} |\n`;
-                      });
-
-                      exactReportText += `\n## ملاحظات إضافية وتوصيات التصدير\n`;
-                      exactReportText += `(يُرجى عدم تخطي التحذير الأمني الخاص بالتصدير إذا تواجدت أخطاء حرجة يجب معالجتها بالمحرر المدمج قبل الحفظ في Keep أو الإرسال كـ Gmail).\n`;
+                      exactReportText += `## ملاحظات إضافية وتوصيات التصدير\n`;
+                      exactReportText += `(يُرجى عدم تخطي التحذير الأمني الخاص بالتصدير إذا تواجدت أخطاء حرجة يجب معالجتها بالمحرر المدمج قبل الحفظ في Keep أو الإرسال كـ Gmail أو تحويل إلى Tasks).\n`;
 
                       return (
                         <div className="bg-[#11141e] border border-gray-800 rounded-2xl p-5 space-y-4">
@@ -1913,38 +2233,46 @@ security_level: داخلي
                               <p className="text-emerald-400">1. الملف سليم تماماً ولا يستوجب أي خطط عمل ملحقة.</p>
                             )}
 
-                            <h2 className="text-indigo-405 text-xs font-bold font-sans mt-4 mb-2">## تفاصيل الفحص (حسب الأبواب العشرة)</h2>
-                            <h3 className="text-teal-400 text-[11px] font-sans font-bold mt-2 mb-1">### الباب الأول: الهوية والبيانات الوصفية</h3>
+                            <h2 className="text-indigo-405 text-xs font-bold font-sans mt-4 mb-2">## تفاصيل الفحص (حسب جميع الأبواب)</h2>
                             
-                            {/* Standard preview table of Chapter 1 */}
-                            <div className="bg-[#0f1118] border border-gray-900 rounded-lg overflow-hidden mt-2 font-sans">
-                              <table className="w-full text-[10px] text-right">
-                                <thead>
-                                  <tr className="bg-gray-950/80 border-b border-gray-900 text-gray-400 text-[9px]">
-                                    <th className="p-2">البند</th>
-                                    <th className="p-2">النتيجة</th>
-                                    <th className="p-2">توصية الإصلاح</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-900">
-                                  {chap1Items.map((it) => (
-                                    <tr key={it.id} className="hover:bg-[#141824]/30">
-                                      <td className="p-2 font-mono text-teal-400 font-bold whitespace-nowrap">{it.id} - {it.name}</td>
-                                      <td className="p-2 whitespace-nowrap">
-                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                          it.status === 'PASS' ? 'text-emerald-450 bg-emerald-950/20' : 
-                                          it.status === 'FAIL' ? 'text-rose-450 bg-rose-950/20' : 
-                                          it.status === 'PARTIAL' ? 'text-amber-450 bg-amber-950/20' : 'text-gray-500'
-                                        }`}>
-                                          {it.status === 'PASS' ? 'نعم ✓' : it.status === 'FAIL' ? 'لا ✗' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى'}
-                                        </span>
-                                      </td>
-                                      <td className="p-2 text-gray-400 text-[10px] max-w-xs truncate">{it.status === 'PASS' ? 'مطابق' : it.recommendation}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                            {/* Standard preview table of All Chapters */}
+                            {CHECKLIST_CHAPTERS.map((chapter, index) => {
+                              const chapterItems = activeFile.report?.items.filter(it => it.chapter === chapter.id) || [];
+                              if (chapterItems.length === 0) return null;
+                              return (
+                                <div key={chapter.id} className="mt-4">
+                                  <h3 className="text-teal-400 text-[11px] font-sans font-bold mb-1">### الباب {index + 1}: {chapter.title.split(': ')[1] || chapter.title}</h3>
+                                  <div className="bg-[#0f1118] border border-gray-900 rounded-lg overflow-hidden mt-2 font-sans">
+                                    <table className="w-full text-[10px] text-right">
+                                      <thead>
+                                        <tr className="bg-gray-950/80 border-b border-gray-900 text-gray-400 text-[9px]">
+                                          <th className="p-2">البند</th>
+                                          <th className="p-2">النتيجة</th>
+                                          <th className="p-2">توصية الإصلاح</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-900">
+                                        {chapterItems.map((it) => (
+                                          <tr key={it.id} className="hover:bg-[#141824]/30">
+                                            <td className="p-2 font-mono text-teal-400 font-bold whitespace-nowrap">{it.id} - {it.name}</td>
+                                            <td className="p-2 whitespace-nowrap">
+                                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                it.status === 'PASS' ? 'text-emerald-450 bg-emerald-950/20' : 
+                                                it.status === 'FAIL' ? 'text-rose-450 bg-rose-950/20' : 
+                                                it.status === 'PARTIAL' ? 'text-amber-450 bg-amber-950/20' : 'text-gray-500'
+                                              }`}>
+                                                {it.status === 'PASS' ? 'نعم ✓' : it.status === 'FAIL' ? 'لا ✗' : it.status === 'PARTIAL' ? 'جزئياً' : 'مستثنى'}
+                                              </span>
+                                            </td>
+                                            <td className="p-2 text-gray-400 text-[10px] max-w-xs truncate">{it.status === 'PASS' ? 'مطابق' : it.recommendation}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -1962,6 +2290,45 @@ security_level: داخلي
                       <span>💡 تصفح البنود حسب أبواب الدستور العشرة المحددة بالبروتوكول.</span>
                       <span>طريقة التصفية النشطة: **وضع {mode === 'teacher' ? 'المرشد (المتطلبات الأساسية فقط)' : 'الخبير (كامل البنود ومخصص الأوزان)'}**</span>
                     </div>
+
+                    {/* Expert Mode Custom Pattern Search Tool */}
+                    {mode === 'expert' && (
+                      <div className="bg-[#11141e] p-4 rounded-xl border border-indigo-900/50 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Search className="w-4 h-4 text-indigo-400" />
+                          <h4 className="text-sm font-bold text-white">أداة البحث وإضافة بند أمني مخصص (Regex/نمط)</h4>
+                        </div>
+                        <p className="text-[11px] text-gray-400">
+                          يمكنك فحص الملف بحثاً عن بيانات حساسة (مثل كلمات المرور، المفاتيح، أو عناوين بريد إلكتروني) كبند أمني مخصص يضاف للتقرير.
+                        </p>
+                        <div className="flex flex-col md:flex-row gap-3">
+                          <select
+                            value={patternSearchCategory}
+                            onChange={(e) => setPatternSearchCategory(e.target.value as any)}
+                            className="bg-[#0f1118] border border-gray-800 text-gray-300 text-xs rounded-lg px-3 py-2 w-full md:w-1/4"
+                          >
+                            <option value="CUSTOM">تعبير نمطي مخصص</option>
+                            <option value="PII">بيانات شخصية (PII)</option>
+                            <option value="PASSWORD">مشفرات وكلمات سر</option>
+                          </select>
+                          <input
+                            type="text"
+                            placeholder="اكتب النمط أو الكلمة (Regex مقبول)..."
+                            value={patternSearchText}
+                            onChange={(e) => setPatternSearchText(e.target.value)}
+                            className="flex-1 bg-[#161a29] border border-gray-800 text-white text-xs rounded-lg px-3 py-2"
+                            onKeyDown={(e) => e.key === 'Enter' && handleExpertPatternSearch()}
+                          />
+                          <button
+                            onClick={handleExpertPatternSearch}
+                            disabled={!patternSearchText}
+                            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 disabled:text-gray-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors border border-indigo-500 disabled:border-transparent"
+                          >
+                            فحص وإضافة كبند
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="space-y-3">
                       {CHECKLIST_CHAPTERS.map(chapter => {
@@ -2467,9 +2834,9 @@ security_level: داخلي
                         <div className="space-y-6">
                           <div className="h-64 w-full bg-[#0d0f17] border border-gray-800 rounded-xl p-4">
                             <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={[...history].reverse()} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                              <LineChart data={[...history].slice(0, 5).reverse()} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" vertical={false} />
-                                <XAxis dataKey="fileName" stroke="#718096" fontSize={10} tickMargin={10} minTickGap={20} />
+                                <XAxis dataKey="fileName" stroke="#718096" fontSize={10} tickMargin={10} minTickGap={20} tickFormatter={(val) => val.length > 15 ? val.substring(0, 15) + '...' : val} />
                                 <YAxis stroke="#718096" fontSize={10} domain={[0, 100]} tickFormatter={(val) => `${val}%`} />
                                 <Tooltip 
                                   contentStyle={{ backgroundColor: '#11141e', borderColor: '#2d3748', borderRadius: '0.5rem', fontSize: '11px', color: '#e2e8f0', direction: 'rtl' }}
